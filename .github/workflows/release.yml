@@ -78,6 +78,25 @@ jobs:
         shell: bash
         run: tar -C dist -czf "dist/${DEST}.tar.gz" "$DEST"
 
+      - name: Build .deb (linux-x64 only)
+        if: matrix.rid == 'linux-x64'
+        shell: bash
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          ROOT="debbuild/gard_${VER}_amd64"
+          mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/bin" "$ROOT/usr/share/doc/gard"
+          sed "s/__VERSION__/$VER/" packaging/debian/control.tmpl > "$ROOT/DEBIAN/control"
+          install -m 0755 out/${{ matrix.rid }}/gard "$ROOT/usr/bin/gard"
+          cp README.md LICENSE LICENSE-docs "$ROOT/usr/share/doc/gard/"
+          dpkg-deb --build --root-owner-group "$ROOT" "dist/gard_${VER}_amd64.deb"
+
+      - name: Upload .deb
+        if: matrix.rid == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gard-deb
+          path: dist/*.deb
+
       - name: Archive (zip)
         if: matrix.archive == 'zip'
         shell: pwsh
@@ -124,3 +143,4 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.deb

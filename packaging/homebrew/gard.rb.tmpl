@@ -1,0 +1,38 @@
+# Homebrew formula template for gard.
+#
+# After a release is published, compute the sha256 of each tarball and
+# replace the __SHA256_*__ placeholders, then copy this file into the
+# gard-net/homebrew-gard tap repo as `Formula/gard.rb`.
+
+class Gard < Formula
+  desc "LAN quality measurement CLI (LSP/1.1)"
+  homepage "https://github.com/gard-net/gard"
+  version "__VERSION__"
+  license "Apache-2.0"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/gard-net/gard/releases/download/v#{version}/gard-v#{version}-osx-arm64.tar.gz"
+      sha256 "__SHA256_OSX_ARM64__"
+    end
+    on_intel do
+      url "https://github.com/gard-net/gard/releases/download/v#{version}/gard-v#{version}-osx-x64.tar.gz"
+      sha256 "__SHA256_OSX_X64__"
+    end
+  end
+
+  on_linux do
+    url "https://github.com/gard-net/gard/releases/download/v#{version}/gard-v#{version}-linux-x64.tar.gz"
+    sha256 "__SHA256_LINUX_X64__"
+  end
+
+  def install
+    bin.install "gard"
+    doc.install "README.md", "LICENSE", "LICENSE-docs"
+    (pkgshare/"docs").install Dir["docs/*"]
+  end
+
+  test do
+    assert_match "gard", shell_output("#{bin}/gard --version")
+  end
+end
