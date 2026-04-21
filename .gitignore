@@ -1,0 +1,30 @@
+# .NET build outputs
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+
+# NuGet
+*.nupkg
+*.snupkg
+
+# AOT / publish outputs
+publish/
+artifacts/
+out/
+
+# Claude Code local settings
+.claude/settings.local.json
+.claude/worktrees/
+
+# macOS
+.DS_Store
+
+# IDE
+*.iml
+.idea/
+
+# Env / secrets
+*.env
