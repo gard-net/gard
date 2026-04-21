@@ -12,7 +12,7 @@ using Gard.Core.Models;
 using Gard.Core.Protocol;
 using Gard.Core.Transport;
 
-const string Version = "gard 0.1.0 (LSP/1.1)";
+static string Version() => $"gard 0.1.0 (LSP/{ProtocolVersion.Current})";
 
 if (args.Length == 0) { PrintUsage(Console.Out); return 1; }
 
@@ -37,14 +37,14 @@ catch (Exception ex)
     return 2;
 }
 
-static int PrintVersion() { Console.Out.WriteLine(Version); return 0; }
+static int PrintVersion() { Console.Out.WriteLine(Version()); return 0; }
 static int HelpOk() { PrintUsage(Console.Out); return 0; }
 static int Fail(string msg) { Console.Error.WriteLine($"gard: {msg}"); PrintUsage(Console.Error); return 2; }
 
 static void PrintUsage(TextWriter w)
 {
     w.WriteLine($"""
-    {Version} — CLI de referencia del Landspeed Protocol (LSP/1.1).
+    {Version()} — CLI de referencia del Landspeed Protocol.
     Mide throughput, latencia, jitter y pérdida en redes locales.
 
     uso:
@@ -181,7 +181,7 @@ static void PrintHostBanner(DeviceIdentity id, int port)
 {
     var rule = new string('─', 60);
     Println(rule);
-    Println($" {Version}");
+    Println($" {Version()}");
     Println(rule);
     Println($" host       : {id.Name}");
     Println($" plataforma : {id.Platform.ToString().ToLowerInvariant()} ({RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()})");
