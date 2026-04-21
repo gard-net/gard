@@ -98,10 +98,19 @@ if [[ $SELF_HOST -eq 1 ]]; then
 fi
 
 # ---------- preflight ----------
-echo "→ preflight ping a $HOST..."
-if ! ping -c 3 -W 1000 "$HOST" >/dev/null 2>&1; then
-    echo "  AVISO: ping falla, sigo igual"
+# TCP connect en vez de ICMP: Windows Firewall bloquea ICMP por default
+# pero los puertos gard/iperf3 deben estar abiertos para que el bench sirva.
+echo "→ preflight TCP connect a $HOST:$GARD_PORT (gard) y $HOST:$IPERF_PORT (iperf3)..."
+preflight_fail=0
+if ! nc -z -w 2 "$HOST" "$GARD_PORT" >/dev/null 2>&1; then
+    echo "  ERROR: no hay TCP en $HOST:$GARD_PORT — ¿arrancaste gard host?"
+    preflight_fail=1
 fi
+if ! nc -z -w 2 "$HOST" "$IPERF_PORT" >/dev/null 2>&1; then
+    echo "  ERROR: no hay TCP en $HOST:$IPERF_PORT — ¿arrancaste iperf3 -s?"
+    preflight_fail=1
+fi
+[[ $preflight_fail -eq 1 ]] && exit 3
 
 # ---------- output layout ----------
 RUN_DIR="$REPO_ROOT/docs/benchmarks/runs/$(date +%Y-%m-%d)_$TAG"
@@ -187,13 +196,17 @@ run_gard() {
 
 parse_gard() {
     # stdin: CSV row (sin header). Columnas en Program.cs:CsvColumns() (LSP/1.2).
+    # Columnas gard (Program.cs:CsvColumns, LSP/1.2):
     # 1=label 2=direction 3=streams 4=duration_s 5=warmup_s 6=payload 7=bidir_mode
-    # 8=transport 9=target_mbps 10=mean_mbps 11=peak_mbps ...
-    # 17=ping_min 18=ping_avg 19=ping_max 20=ping_p95 21=jitter_ms 22=loss_pct
-    # 23=ping_samples 24=rtt_med 25=rtt_p95 26=rtt_spk
+    # 8=transport 9=target_mbps 10=mean_mbps 11=peak_mbps
+    # 12=up_mean 13=up_peak 14=down_mean 15=down_peak
+    # 16=ping_min 17=ping_avg 18=ping_max 19=ping_p95
+    # 20=jitter_ms 21=loss_pct 22=ping_samples
+    # 23=rtt_load_median 24=rtt_load_p95 25=rtt_load_spikes
     awk -F',' '{
         if (NF < 10) { print "0,,,,,"; exit }
-        print $10","$21","$22","$18","$20","$25
+        #   mean   jitter  loss    p_avg   p_p95   rtt_p95
+        print $10","$20","$21","$17","$19","$24
     }'
 }
 
@@ -270,26 +283,37 @@ rows = list(csv.DictReader(open(results_path)))
 rows = [r for r in rows if r["throughput_mbps"] not in ("", "0")]
 
 cells = defaultdict(lambda: defaultdict(list))
+gard_rtt = defaultdict(list)
+gard_loss = defaultdict(list)
 for r in rows:
     key = (r["transport"], r["direction"], r["streams"], r["duration_s"], r["payload"], r["target_bitrate_bps"])
     cells[key][r["tool"]].append(float(r["throughput_mbps"]))
+    if r["tool"] == "gard":
+        try: gard_rtt[key].append(float(r["rtt_load_p95_ms"]))
+        except (ValueError, KeyError): pass
+        try: gard_loss[key].append(float(r["loss_pct"]))
+        except (ValueError, KeyError): pass
 
 def med(xs): return round(statistics.median(xs), 2) if xs else None
 
+max_reps = max((len(v.get("gard", [])) for v in cells.values()), default=0)
+
 with open(summary_path, "w") as f:
     f.write(f"# Summary — {run_id}\n\n")
-    f.write("| transport | dir | streams | dur | payload | bitrate | iperf3 med (Mb/s) | gard med (Mb/s) | delta % | n iperf3 | n gard |\n")
-    f.write("|---|---|---|---|---|---|---|---|---|---|---|\n")
+    if max_reps <= 1:
+        f.write("> ⚠ n=1 por celda: valores preliminares, variance TCP típica ±15%.\n\n")
+    f.write("| transport | dir | streams | dur | payload | bitrate | iperf3 med (Mb/s) | gard med (Mb/s) | delta % | gard rtt p95 (ms) | gard loss % | n |\n")
+    f.write("|---|---|---|---|---|---|---|---|---|---|---|---|\n")
     for key, by_tool in sorted(cells.items()):
         i = by_tool.get("iperf3", [])
         g = by_tool.get("gard", [])
         mi, mg = med(i), med(g)
-        if mi and mg:
-            delta = round((mg - mi) / mi * 100, 1)
-        else:
-            delta = ""
-        f.write(f"| {key[0]} | {key[1]} | {key[2]} | {key[3]}s | {key[4]} | {key[5]} | {mi or ''} | {mg or ''} | {delta} | {len(i)} | {len(g)} |\n")
-    f.write("\n_Mediana de las repeticiones por celda. `delta %` = (gard - iperf3) / iperf3._\n")
+        delta = round((mg - mi) / mi * 100, 1) if mi and mg else ""
+        rtt = med(gard_rtt.get(key, []))
+        loss = med(gard_loss.get(key, []))
+        f.write(f"| {key[0]} | {key[1]} | {key[2]} | {key[3]}s | {key[4]} | {key[5]} | {mi or ''} | {mg or ''} | {delta} | {rtt if rtt is not None else ''} | {loss if loss is not None else ''} | {len(g)} |\n")
+    f.write("\n_Mediana por celda. `delta %` = (gard − iperf3) / iperf3._  \n")
+    f.write("_`rtt p95` = p95 de RTT bajo carga medido por gard (ms). Valores altos indican bufferbloat — iperf3 no lo reporta._\n")
 PY
 
 echo "✓ listo. resultados: $RESULTS"
