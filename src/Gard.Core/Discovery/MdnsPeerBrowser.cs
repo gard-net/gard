@@ -34,6 +34,20 @@ public sealed class MdnsPeerBrowser : IAsyncDisposable
 
     private readonly ConcurrentDictionary<string, DiscoveredPeer> _peers = new(StringComparer.OrdinalIgnoreCase);
 
+    // Fragmentos de records recibidos por instance name. Algunos advertisers
+    // (p.ej. triuque en Windows) reparten SRV/TXT/A/AAAA en mensajes mDNS
+    // distintos, así que mantenemos un buffer y emitimos cuando ya vimos
+    // SRV + TXT. La llave interna es el nombre de instancia (case-insensitive).
+    private readonly ConcurrentDictionary<string, InstanceBuffer> _buffers =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed class InstanceBuffer
+    {
+        public SRVRecord? Srv;
+        public TXTRecord? Txt;
+        public readonly Dictionary<string, IPAddress> Addresses = new(StringComparer.OrdinalIgnoreCase);
+    }
+
     private MulticastService? _mdns;
     private ServiceDiscovery? _sd;
     private int _disposed;
@@ -71,22 +85,79 @@ public sealed class MdnsPeerBrowser : IAsyncDisposable
 
     private void OnServiceInstanceDiscovered(object? sender, ServiceInstanceDiscoveryEventArgs e)
     {
-        // La respuesta al PTR suele venir acompañada de SRV+TXT+A/AAAA en
-        // AdditionalRecords; procesamos todos los records del mensaje.
-        TryIngest(e.ServiceInstanceName.ToString(), e.Message);
+        // La respuesta al PTR en general incluye SRV+TXT+A/AAAA en
+        // AdditionalRecords, pero no siempre: algunos advertisers los mandan
+        // en mensajes separados. Lanzamos queries específicas al SD para
+        // forzar resolución completa, y el buffer se irá llenando vía
+        // AnswerReceived.
+        _sd?.QueryServiceInstances(new DomainName(DiscoveryConstants.ServiceType));
+        TryEmit(e.ServiceInstanceName.ToString(), e.Message);
     }
 
     private void OnAnswerReceived(object? sender, MessageEventArgs e)
     {
-        // Cada peer activo reemite periódicamente; aprovechamos para actualizar
-        // direcciones si aparecieron A/AAAA en respuestas posteriores.
+        // Cada peer activo reemite periódicamente; aprovechamos para ir
+        // acumulando fragmentos (SRV/TXT/A/AAAA) en el buffer por instancia y
+        // reevaluar los peers afectados.
+        var touched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var rec in e.Message.Answers.Concat(e.Message.AdditionalRecords))
         {
-            if (rec is PTRRecord ptr && IsLandspeedServiceType(ptr.Name))
+            switch (rec)
             {
-                TryIngest(ptr.DomainName.ToString(), e.Message);
+                case PTRRecord ptr when IsLandspeedServiceType(ptr.Name):
+                    touched.Add(ptr.DomainName.ToString());
+                    break;
+                case SRVRecord srv when IsLandspeedInstance(srv.Name):
+                    var key = srv.Name.ToString();
+                    Buffer(key).Srv = srv;
+                    touched.Add(key);
+                    break;
+                case TXTRecord txt when IsLandspeedInstance(txt.Name):
+                    var tkey = txt.Name.ToString();
+                    Buffer(tkey).Txt = txt;
+                    touched.Add(tkey);
+                    break;
             }
         }
+
+        // A/AAAA records vienen keyed por el SRV target, no por el service
+        // instance, así que los asociamos vía el SRV de cada buffer conocido.
+        foreach (var rec in e.Message.Answers.Concat(e.Message.AdditionalRecords))
+        {
+            if (rec is not (ARecord or AAAARecord)) continue;
+            var addr = rec switch
+            {
+                ARecord a => a.Address,
+                AAAARecord aaaa => aaaa.Address,
+                _ => null,
+            };
+            if (addr is null) continue;
+            foreach (var kv in _buffers)
+            {
+                var target = kv.Value.Srv?.Target.ToString();
+                if (target is not null && NameEquals(rec.Name, target))
+                {
+                    kv.Value.Addresses[addr.ToString()] = addr;
+                    touched.Add(kv.Key);
+                }
+            }
+        }
+
+        foreach (var name in touched) TryEmit(name, e.Message);
+    }
+
+    private InstanceBuffer Buffer(string instance) =>
+        _buffers.GetOrAdd(instance, _ => new InstanceBuffer());
+
+    private static bool IsLandspeedInstance(DomainName name)
+    {
+        // Un service instance termina con `._landspeed._tcp.local`.
+        var s = name.ToString().TrimEnd('.');
+        return s.EndsWith("." + DiscoveryConstants.ServiceType.TrimEnd('.').TrimStart('.'),
+                          StringComparison.OrdinalIgnoreCase)
+            || s.EndsWith("." + DiscoveryConstants.ServiceType + "local",
+                          StringComparison.OrdinalIgnoreCase)
+            || s.Contains("._landspeed._tcp", StringComparison.OrdinalIgnoreCase);
     }
 
     private void OnServiceInstanceShutdown(object? sender, ServiceInstanceShutdownEventArgs e)
@@ -108,17 +179,21 @@ public sealed class MdnsPeerBrowser : IAsyncDisposable
         return s.StartsWith(DiscoveryConstants.ServiceType, StringComparison.OrdinalIgnoreCase);
     }
 
-    private void TryIngest(string serviceInstanceName, Message message)
+    private void TryEmit(string serviceInstanceName, Message message)
     {
-        var srv = message.Answers.OfType<SRVRecord>()
-            .Concat(message.AdditionalRecords.OfType<SRVRecord>())
-            .FirstOrDefault(r => NameEquals(r.Name, serviceInstanceName));
+        // Primero actualizamos el buffer con cualquier fragmento que traiga
+        // este mensaje puntual (útil para el caso ServiceInstanceDiscovered
+        // clásico en el que todo viene junto).
+        var buf = Buffer(serviceInstanceName);
+        foreach (var rec in message.Answers.Concat(message.AdditionalRecords))
+        {
+            if (rec is SRVRecord s && NameEquals(s.Name, serviceInstanceName)) buf.Srv = s;
+            if (rec is TXTRecord t && NameEquals(t.Name, serviceInstanceName)) buf.Txt = t;
+        }
+        if (buf.Srv is null || buf.Txt is null) return;
 
-        var txt = message.Answers.OfType<TXTRecord>()
-            .Concat(message.AdditionalRecords.OfType<TXTRecord>())
-            .FirstOrDefault(r => NameEquals(r.Name, serviceInstanceName));
-
-        if (srv is null || txt is null) return;
+        var srv = buf.Srv;
+        var txt = buf.Txt;
 
         var attrs = ParseTxt(txt);
         var parsed = LandspeedTxtRecord.Parse(attrs);
@@ -126,17 +201,16 @@ public sealed class MdnsPeerBrowser : IAsyncDisposable
         if (parsed.ProtocolVersionMajor != DiscoveryConstants.ProtocolVersionMajor) return;
 
         var target = srv.Target.ToString();
-        var addresses = message.Answers.Concat(message.AdditionalRecords)
-            .Where(r => NameEquals(r.Name, target))
-            .Select(r => r switch
-            {
-                ARecord a => a.Address,
-                AAAARecord aaaa => aaaa.Address,
-                _ => null,
-            })
-            .OfType<IPAddress>()
-            .ToArray();
 
+        // A/AAAA pueden llegar en este mensaje (mismas señales) o haberse
+        // acumulado en el buffer vía mensajes previos.
+        foreach (var rec in message.Answers.Concat(message.AdditionalRecords))
+        {
+            if (rec is ARecord a && NameEquals(a.Name, target))    buf.Addresses[a.Address.ToString()] = a.Address;
+            if (rec is AAAARecord q && NameEquals(q.Name, target)) buf.Addresses[q.Address.ToString()] = q.Address;
+        }
+
+        var addresses = buf.Addresses.Values.ToArray();
         var host = addresses.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?.ToString()
                 ?? addresses.FirstOrDefault()?.ToString()
                 ?? target;
