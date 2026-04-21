@@ -102,8 +102,8 @@ public class ProtocolVersionTests
     }
 
     [Fact]
-    public void CurrentIsOneDotOne()
+    public void CurrentIsOneDotTwo()
     {
-        Assert.Equal(new ProtocolVersion(1, 1), ProtocolVersion.Current);
+        Assert.Equal(new ProtocolVersion(1, 2), ProtocolVersion.Current);
     }
 }

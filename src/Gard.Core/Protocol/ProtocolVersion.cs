@@ -7,7 +7,7 @@ namespace Gard.Core.Protocol;
 [JsonConverter(typeof(ProtocolVersionJsonConverter))]
 public readonly record struct ProtocolVersion(int Major, int Minor)
 {
-    public static readonly ProtocolVersion Current = new(1, 1);
+    public static readonly ProtocolVersion Current = new(1, 2);
 
     public override string ToString() => $"{Major}.{Minor}";
 
