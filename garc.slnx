@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Garc.Cli/Garc.Cli.csproj" />
+    <Project Path="src/Garc.Core.Tests/Garc.Core.Tests.csproj" />
+    <Project Path="src/Garc.Core/Garc.Core.csproj" />
+  </Folder>
+</Solution>
