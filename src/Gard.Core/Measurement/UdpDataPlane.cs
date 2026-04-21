@@ -99,19 +99,33 @@ public static class UdpDataPlane
             var sock = hostSockets.Sockets[i];
             tasks[i] = Task.Run(async () =>
             {
-                while (!timeoutCts.IsCancellationRequested)
+                try
                 {
-                    var r = await sock.ReceiveAsync(timeoutCts.Token).ConfigureAwait(false);
-                    if (TryParseHeader(r.Buffer, out var seq, out _, out _) && seq == 0)
+                    while (!timeoutCts.IsCancellationRequested)
                     {
-                        endpoints[idx] = r.RemoteEndPoint;
-                        return;
+                        var r = await sock.ReceiveAsync(timeoutCts.Token).ConfigureAwait(false);
+                        if (TryParseHeader(r.Buffer, out var seq, out _, out _) && seq == 0)
+                        {
+                            endpoints[idx] = r.RemoteEndPoint;
+                            return;
+                        }
+                        onStrayData?.Invoke(idx, r);
                     }
-                    onStrayData?.Invoke(idx, r);
+                }
+                catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    // timeout: endpoints[idx] queda null, reportado abajo
                 }
             });
         }
         await Task.WhenAll(tasks).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var missing = new List<int>();
+        for (var i = 0; i < endpoints.Length; i++)
+            if (endpoints[i] is null) missing.Add(i);
+        if (missing.Count > 0)
+            throw new TimeoutException(
+                $"HELLO_UDP no recibido en {timeoutMs} ms para streams: [{string.Join(",", missing)}]");
         return endpoints;
     }
 
