@@ -29,7 +29,7 @@ Cada celda de la matriz se ejecuta **N veces** por herramienta en modo *back-to-
 
 ### Control de variables
 - Wi-Fi apagado durante pruebas por cable (el script intenta detectarlo y advierte).
-- Spotlight / Time Machine / cualquier sync pausados en el MBP antes de correr.
+- Spotlight / Time Machine / cualquier sync pausados en el cliente antes de correr.
 - Mismo puerto del router / switch en todas las corridas de una suite.
 - Warmup de 2s descartado en ambas herramientas (`gard --warmup 2`, `iperf3 --omit 2`).
 - Orden de celdas randomizado dentro de cada repetición.
