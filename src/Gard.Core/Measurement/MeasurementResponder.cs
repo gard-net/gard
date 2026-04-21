@@ -35,6 +35,14 @@ public static class MeasurementResponder
             // 2. Esperar test_start.
             var (_, parms) = await router.AwaitTestStartAsync(120_000, cancellationToken).ConfigureAwait(false);
 
+            // LSP/1.2: si el test es UDP, delega al orquestador UDP.
+            if (parms.Transport == TestTransport.Udp)
+            {
+                return await UdpMeasurement.RunHostAsync(
+                    controlConnection, router, parms, sessionId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             // 3. Abrir N listeners, mandar ack, aceptar conexiones (en ese orden).
             var acceptance = await dataPlane.HostOpenAsync(parms.Streams, cancellationToken).ConfigureAwait(false);
             var ackId = NextRandomId();

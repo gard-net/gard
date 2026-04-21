@@ -43,6 +43,10 @@ public sealed class ControlMessageRouter : IAsyncDisposable
     private readonly Queue<TaskCompletionSource<ulong>> _testEndWaiters = new();
     private readonly Queue<ulong> _pendingTestEnds = new();
 
+    // --- Ambos (LSP/1.2) ---
+    private readonly Queue<TaskCompletionSource<UdpStatsReportBody>> _udpStatsWaiters = new();
+    private readonly Queue<UdpStatsReportBody> _pendingUdpStats = new();
+
     public ChannelReader<TestTickBody> Ticks => _ticks.Reader;
     public ChannelReader<(ulong Id, PingBody Body)> Pings => _pings.Reader;
     public ChannelReader<GoodbyeBody> Goodbyes => _goodbyes.Reader;
@@ -171,6 +175,23 @@ public sealed class ControlMessageRouter : IAsyncDisposable
                 }
                 break;
 
+            case UdpStatsReportMessage stats:
+                lock (_gate)
+                {
+                    if (_udpStatsWaiters.Count > 0)
+                    {
+                        while (_udpStatsWaiters.Count > 0)
+                        {
+                            _udpStatsWaiters.Dequeue().TrySetResult(stats.Body);
+                        }
+                    }
+                    else
+                    {
+                        _pendingUdpStats.Enqueue(stats.Body);
+                    }
+                }
+                break;
+
             case GoodbyeMessage bye:
                 _goodbyes.Writer.TryWrite(bye.Body);
                 break;
@@ -199,6 +220,7 @@ public sealed class ControlMessageRouter : IAsyncDisposable
             while (_testStartAckWaiters.Count > 0) _testStartAckWaiters.Dequeue().TrySetException(ex);
             while (_testStartWaiters.Count > 0) _testStartWaiters.Dequeue().TrySetException(ex);
             while (_testEndWaiters.Count > 0) _testEndWaiters.Dequeue().TrySetException(ex);
+            while (_udpStatsWaiters.Count > 0) _udpStatsWaiters.Dequeue().TrySetException(ex);
         }
         _ticks.Writer.TryComplete(ex);
         _pings.Writer.TryComplete(ex);
@@ -260,6 +282,19 @@ public sealed class ControlMessageRouter : IAsyncDisposable
             if (_pendingTestStarts.Count > 0) return Task.FromResult(_pendingTestStarts.Dequeue());
             tcs = new TaskCompletionSource<(ulong, TestStartBody)>(TaskCreationOptions.RunContinuationsAsynchronously);
             _testStartWaiters.Enqueue(tcs);
+        }
+        return WithTimeoutAsync(tcs, timeoutMs, null, ct);
+    }
+
+    public Task<UdpStatsReportBody> AwaitUdpStatsReportAsync(int timeoutMs = 30_000, CancellationToken ct = default)
+    {
+        TaskCompletionSource<UdpStatsReportBody> tcs;
+        lock (_gate)
+        {
+            if (_terminal is not null) return Task.FromException<UdpStatsReportBody>(_terminal);
+            if (_pendingUdpStats.Count > 0) return Task.FromResult(_pendingUdpStats.Dequeue());
+            tcs = new TaskCompletionSource<UdpStatsReportBody>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _udpStatsWaiters.Enqueue(tcs);
         }
         return WithTimeoutAsync(tcs, timeoutMs, null, ct);
     }

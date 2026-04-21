@@ -16,8 +16,8 @@ down,1,30,16384,tcp,0,3
 down,1,30,65536,tcp,0,3
 down,1,30,262144,tcp,0,3
 #
-# Fase 2 — UDP (requiere LSP/1.2)
-# down,1,20,1200,udp,10000000,3
-# down,1,20,1200,udp,100000000,3
-# down,1,20,1200,udp,500000000,3
-# down,1,20,1200,udp,0,3
+# Fase 2 — UDP (LSP/1.2, sólo direction=up en esta versión: cliente envía, host mide).
+up,1,20,1200,udp,10000000,3
+up,1,20,1200,udp,100000000,3
+up,1,20,1200,udp,500000000,3
+up,1,20,1200,udp,0,3

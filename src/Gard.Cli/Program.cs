@@ -54,6 +54,7 @@ static void PrintUsage(TextWriter w)
                   [--direction up|down|bidir] [--streams N]
                   [--duration S] [--warmup S] [--payload BYTES]
                   [--bidir-mode sequential|simultaneous] [--gap S]
+                  [--transport tcp|udp] [--bitrate BPS]
                   [--format human|json|csv] [--label ID]
       gard test   --csv-header
       gard -v | -h
@@ -242,12 +243,24 @@ static async Task<int> RunTestAsync(string[] a)
     var gap       = GetDoubleOpt(a, "--gap", 0.5);
     var fmtStr    = GetStringOpt(a, "--format", "human").ToLowerInvariant();
     var label     = GetStringOpt(a, "--label", "");
+    var transStr  = GetStringOpt(a, "--transport", "tcp").ToLowerInvariant();
+    var bitrate   = ParseBitrate(GetStringOpt(a, "--bitrate", "0"));
 
     var direction = dirStr switch
     {
         "up" => TestDirection.Up, "down" => TestDirection.Down, "bidir" => TestDirection.Bidir,
         _ => throw new ArgumentException($"--direction debe ser up|down|bidir (recibido: {dirStr})"),
     };
+    var transport = transStr switch
+    {
+        "tcp" => TestTransport.Tcp,
+        "udp" => TestTransport.Udp,
+        _ => throw new ArgumentException($"--transport debe ser tcp|udp (recibido: {transStr})"),
+    };
+    if (transport == TestTransport.Udp && direction != TestDirection.Up)
+        return Fail("UDP actualmente sólo soporta --direction up (LSP/1.2 inicial)");
+    if (transport == TestTransport.Udp && payload > Gard.Core.Measurement.UdpDataPlane.MaxPayloadSize)
+        return Fail($"UDP --payload debe ser <= {Gard.Core.Measurement.UdpDataPlane.MaxPayloadSize}");
     var bidirMode = bidirMStr switch
     {
         "simultaneous" => BidirMode.Simultaneous, "sequential" => BidirMode.Sequential,
@@ -285,6 +298,8 @@ static async Task<int> RunTestAsync(string[] a)
         WarmupS = warmup,
         BidirMode = direction == TestDirection.Bidir ? bidirMode : null,
         GapS = direction == TestDirection.Bidir && bidirMode == BidirMode.Sequential ? gap : null,
+        Transport = transport,
+        TargetBitrateBps = bitrate,
     };
     var inputs = new MeasurementClientInputs
     {
@@ -329,6 +344,13 @@ static void PrintTestHuman(TestResult r)
     Console.Out.WriteLine($"  loss      : {r.LossPct:F2} % (n={r.PingSamples})");
     if (r.RttUnderLoadMs is { } rtt)
         Console.Out.WriteLine($"  rtt load  : median={rtt.MedianMs:F2} p95={rtt.P95Ms:F2} spikes={rtt.SpikesCount} (n={rtt.Samples})");
+    if (r.Udp is { } u)
+    {
+        Console.Out.WriteLine($"  udp       : sent={u.PacketsSent} recv={u.PacketsReceived} lost={u.PacketsLost} ({u.LossPct:F2}%)");
+        Console.Out.WriteLine($"              reorder={u.ReorderCount} ({u.ReorderPct:F2}%) dup={u.DuplicateCount} jitter={u.JitterMs:F2} ms");
+        if (u.TargetBitrateBps > 0)
+            Console.Out.WriteLine($"              target={u.TargetBitrateBps / 1_000_000.0:F2} Mb/s miss={u.BitrateMissPct:F2}%");
+    }
 }
 
 static void PrintTestJson(TestResult r)
@@ -340,11 +362,13 @@ static void PrintTestJson(TestResult r)
 static string[] CsvColumns() =>
 [
     "label","direction","streams","duration_s","warmup_s","payload","bidir_mode",
+    "transport","target_mbps",
     "mean_mbps","peak_mbps",
     "up_mean_mbps","up_peak_mbps","down_mean_mbps","down_peak_mbps",
     "ping_min_ms","ping_avg_ms","ping_max_ms","ping_p95_ms",
     "jitter_ms","loss_pct","ping_samples",
     "rtt_load_median_ms","rtt_load_p95_ms","rtt_load_spikes",
+    "udp_packets_sent","udp_packets_recv","udp_loss_pct","udp_reorder_pct","udp_dup","udp_jitter_ms","udp_bitrate_miss_pct",
 ];
 
 static void PrintTestCsv(TestResult r, TestParameters p, string label)
@@ -358,6 +382,16 @@ static void PrintTestCsv(TestResult r, TestParameters p, string label)
     string rttMed   = r.RttUnderLoadMs is { } m  ? F(m.MedianMs) : "";
     string rttP95   = r.RttUnderLoadMs is { } m2 ? F(m2.P95Ms) : "";
     string rttSpk   = r.RttUnderLoadMs is { } m3 ? m3.SpikesCount.ToString(CultureInfo.InvariantCulture) : "";
+    string udpSent  = r.Udp is { } u1 ? u1.PacketsSent.ToString(CultureInfo.InvariantCulture) : "";
+    string udpRecv  = r.Udp is { } u2b ? u2b.PacketsReceived.ToString(CultureInfo.InvariantCulture) : "";
+    string udpLoss  = r.Udp is { } u3 ? F(u3.LossPct) : "";
+    string udpReord = r.Udp is { } u4 ? F(u4.ReorderPct) : "";
+    string udpDup   = r.Udp is { } u5 ? u5.DuplicateCount.ToString(CultureInfo.InvariantCulture) : "";
+    string udpJit   = r.Udp is { } u6 ? F(u6.JitterMs) : "";
+    string udpMiss  = r.Udp is { } u7 ? F(u7.BitrateMissPct) : "";
+    string targetMbps = p.Transport == TestTransport.Udp
+        ? (p.TargetBitrateBps / 1_000_000.0).ToString("F3", CultureInfo.InvariantCulture)
+        : "";
 
     var cells = new[]
     {
@@ -368,11 +402,14 @@ static void PrintTestCsv(TestResult r, TestParameters p, string label)
         p.WarmupS.ToString("F2", CultureInfo.InvariantCulture),
         p.PayloadSize.ToString(CultureInfo.InvariantCulture),
         p.BidirMode?.ToString().ToLowerInvariant() ?? "",
+        p.Transport.ToString().ToLowerInvariant(),
+        targetMbps,
         Mbps(r.MeanBps), Mbps(r.PeakBps),
         upMean, upPeak, downMean, downPeak,
         F(r.PingMinMs), F(r.PingAvgMs), F(r.PingMaxMs), F(r.PingP95Ms),
         F(r.JitterMs), F(r.LossPct), r.PingSamples.ToString(CultureInfo.InvariantCulture),
         rttMed, rttP95, rttSpk,
+        udpSent, udpRecv, udpLoss, udpReord, udpDup, udpJit, udpMiss,
     };
     Console.Out.WriteLine(string.Join(",", cells));
 }
@@ -420,6 +457,21 @@ static List<(string Iface, string Ip)> LocalIPv4()
         }
     }
     return result;
+}
+
+// Acepta "10000000", "10M", "10Mbps", "1.5G", "500k". Devuelve bps.
+static ulong ParseBitrate(string s)
+{
+    if (string.IsNullOrWhiteSpace(s)) return 0;
+    s = s.Trim().ToLowerInvariant();
+    s = s.Replace("bps", "").Replace("b/s", "").Trim();
+    double mult = 1;
+    if (s.EndsWith("k")) { mult = 1_000; s = s[..^1]; }
+    else if (s.EndsWith("m")) { mult = 1_000_000; s = s[..^1]; }
+    else if (s.EndsWith("g")) { mult = 1_000_000_000; s = s[..^1]; }
+    if (!double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
+        throw new ArgumentException($"--bitrate inválido: {s}");
+    return (ulong)Math.Round(v * mult);
 }
 
 static bool HasFlag(string[] a, string name)

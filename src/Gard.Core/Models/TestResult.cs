@@ -36,6 +36,9 @@ public sealed record TestResult
     /// <summary>LSP/1.1: throughput fase down en bidir secuencial. Opcional.</summary>
     public ThroughputBody? ThroughputDown { get; init; }
 
+    /// <summary>LSP/1.2: métricas del data-plane UDP. Null si el test fue TCP.</summary>
+    public UdpStatsBody? Udp { get; init; }
+
     public NetworkInfoMetadata? NetworkInfo { get; init; }
     public ProtocolVersion ProtocolVersion { get; init; } = Protocol.ProtocolVersion.Current;
 
@@ -68,6 +71,7 @@ public sealed record TestResult
         Intervals = Intervals,
         ThroughputUp = ThroughputUp,
         ThroughputDown = ThroughputDown,
+        Udp = Udp,
         ProtocolVersion = ProtocolVersion,
     };
 }

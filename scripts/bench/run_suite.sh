@@ -186,11 +186,14 @@ run_gard() {
 }
 
 parse_gard() {
-    # stdin: CSV row (sin header). Columnas documentadas en Program.cs:CsvColumns().
-    # Indices (0-based): 7=mean_mbps, 17=jitter_ms, 18=loss_pct, 14=ping_avg_ms, 16=ping_p95_ms, 22=rtt_load_p95_ms
+    # stdin: CSV row (sin header). Columnas en Program.cs:CsvColumns() (LSP/1.2).
+    # 1=label 2=direction 3=streams 4=duration_s 5=warmup_s 6=payload 7=bidir_mode
+    # 8=transport 9=target_mbps 10=mean_mbps 11=peak_mbps ...
+    # 17=ping_min 18=ping_avg 19=ping_max 20=ping_p95 21=jitter_ms 22=loss_pct
+    # 23=ping_samples 24=rtt_med 25=rtt_p95 26=rtt_spk
     awk -F',' '{
         if (NF < 10) { print "0,,,,,"; exit }
-        print $8","$18","$19","$15","$17","$23
+        print $10","$21","$22","$18","$20","$25
     }'
 }
 
@@ -215,8 +218,8 @@ run_cell() {
             local out; out="$(run_iperf3 "$direction" "$streams" "$duration" "$payload" "$transport" "$bitrate")"
             IFS=',' read -r tp jit loss <<< "$(echo "$out" | parse_iperf3)"
         else
-            if [[ "$transport" == udp ]]; then
-                echo "    SKIP gard udp — no implementado aun (LSP/1.2)"
+            if [[ "$transport" == udp && "$direction" != up ]]; then
+                echo "    SKIP gard udp — sólo direction=up soportado (LSP/1.2 inicial)"
                 continue
             fi
             local out; out="$(run_gard "$direction" "$streams" "$duration" "$payload" "$transport" "$bitrate")"

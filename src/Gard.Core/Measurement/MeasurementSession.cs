@@ -76,6 +76,15 @@ public static class MeasurementSession
                 $"host devolvió {ack.DataPorts.Count} puertos, esperados {parms.Streams}");
         }
 
+        // LSP/1.2: si el test es UDP, delega al orquestador UDP (no abre TCP).
+        if (parms.Transport == TestTransport.Udp)
+        {
+            return await UdpMeasurement.RunClientAsync(
+                controlConnection, router, remoteHost, ack.DataPorts,
+                inputs, pingStats, startedAt, onProgress,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         // 3. Conectar N sockets al host.
         var dataConns = await dataPlane.ClientConnectAsync(
             remoteHost, ack.DataPorts, timeoutMs: 10_000, cancellationToken).ConfigureAwait(false);

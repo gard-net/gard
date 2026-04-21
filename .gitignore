@@ -28,3 +28,6 @@ out/
 
 # Env / secrets
 *.env
+
+# Benchmark run outputs (generados localmente, no versionados).
+docs/benchmarks/runs/
