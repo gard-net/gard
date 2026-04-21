@@ -24,7 +24,12 @@ jobs:
           - os: macos-latest
             rid: osx-arm64
             archive: tar
-          - os: macos-13
+          # osx-x64 se cross-compila desde el runner arm64 (macos-latest).
+          # El pool de macos-13 Intel está saturado/deprecado, así que
+          # evitamos quedar encolados para siempre. `dotnet publish -r
+          # osx-x64 --self-contained` produce un binario Intel nativo
+          # válido para cualquier Mac Intel ≥10.15.
+          - os: macos-latest
             rid: osx-x64
             archive: tar
           - os: windows-latest
