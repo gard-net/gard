@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Gard.Cli/Gard.Cli.csproj" />
+    <Project Path="src/Gard.Core.Tests/Gard.Core.Tests.csproj" />
+    <Project Path="src/Gard.Core/Gard.Core.csproj" />
+  </Folder>
+</Solution>
