@@ -6,19 +6,19 @@ using Gard.Core.Transport;
 namespace Gard.Core.Measurement;
 
 /// <summary>
-/// Orquestación LSP/1.2 cuando el data-plane es UDP. Primera versión soporta
-/// <c>Direction=Up</c> (cliente → host). Down/Bidir se rechazan con
-/// <see cref="LandspeedException"/> hasta que se implementen.
+/// Orquestación LSP/1.2 cuando el data-plane es UDP.
+/// Soporta <c>Up</c>, <c>Down</c> y <c>Bidir</c> (simultaneous).
 ///
-/// Flujo (up):
-///   1. Cliente ya hizo ping + <c>test_start</c>. Esta función se llama desde
-///      <see cref="MeasurementSession"/> tras recibir <c>test_start_ack</c>.
-///   2. Host ya envió <c>test_start_ack</c> con puertos UDP; aquí arranca los
-///      receivers.
-///   3. Cliente envía durante <c>DurationS</c>, luego <c>test_end</c>.
-///   4. Cliente envía <c>udp_stats</c> con packets_sent por stream.
-///   5. Host agrega + responde con <c>udp_stats</c> (host no envía; vacío) y
-///      luego emite <c>result</c> con <see cref="UdpStatsBody"/> poblado.
+/// Idea base:
+///   - Ambos lados corren senders + receivers según dirección.
+///   - Tras <c>test_end</c>, ambos intercambian un <c>udp_stats</c> con stats
+///     completas por stream (sent/recv/reorder/dup/jitter).
+///   - El host agrega ambos reportes y calcula pérdida por dirección.
+///
+/// Pérdida por dirección:
+///   - Up   (cliente → host): host.received vs cliente.sent
+///   - Down (host   → cliente): cliente.received vs host.sent
+///   - Bidir: ambas, promedio en el UdpStatsBody agregado.
 /// </summary>
 public static class UdpMeasurement
 {
@@ -34,81 +34,81 @@ public static class UdpMeasurement
         CancellationToken ct)
     {
         var parms = inputs.Parameters;
-        if (parms.Direction != TestDirection.Up)
+        if (parms.Direction == TestDirection.Bidir && parms.BidirMode == BidirMode.Sequential)
         {
             throw LandspeedException.InternalInconsistency(
-                $"UDP actualmente sólo soporta Direction=Up; recibido {parms.Direction}");
+                "UDP no soporta bidir secuencial; usar --bidir-mode simultaneous");
         }
+
+        var doSend = parms.Direction is TestDirection.Up or TestDirection.Bidir;
+        var doRecv = parms.Direction is TestDirection.Down or TestDirection.Bidir;
 
         await using var clientSockets = await UdpDataPlane.ClientConnectAsync(
             remoteHost, dataPorts, parms.Streams, ct).ConfigureAwait(false);
 
-        // Un sender por stream. Reparto del bitrate objetivo entre streams.
         using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var senders = new UdpSender[parms.Streams];
-        var sendTasks = new Task[parms.Streams];
-        var perStreamTarget = parms.TargetBitrateBps > 0
-            ? parms.TargetBitrateBps / (ulong)Math.Max(1, parms.Streams)
-            : 0UL;
-        for (var i = 0; i < parms.Streams; i++)
+        using var recvCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        var senders = doSend ? new UdpSender[parms.Streams] : null;
+        var sendTasks = doSend ? new Task[parms.Streams] : null;
+        var recvStats = doRecv ? new UdpReceiverStats[parms.Streams] : null;
+        var recvTasks = doRecv ? new Task[parms.Streams] : null;
+
+        if (doSend)
         {
-            senders[i] = new UdpSender();
-            var s = senders[i];
-            var sock = clientSockets.Sockets[i];
-            var idx = (ushort)i;
-            sendTasks[i] = Task.Run(() => s.RunAsync(
-                sock, idx, parms.PayloadSize, perStreamTarget, sendCts.Token));
+            var per = parms.TargetBitrateBps > 0
+                ? parms.TargetBitrateBps / (ulong)Math.Max(1, parms.Streams)
+                : 0UL;
+            for (var i = 0; i < parms.Streams; i++)
+            {
+                senders![i] = new UdpSender();
+                var s = senders[i]; var sock = clientSockets.Sockets[i]; var idx = (ushort)i;
+                sendTasks![i] = Task.Run(() => s.RunAsync(
+                    sock, idx, parms.PayloadSize, per, sendCts.Token));
+            }
+        }
+        if (doRecv)
+        {
+            for (var i = 0; i < parms.Streams; i++)
+            {
+                recvStats![i] = new UdpReceiverStats();
+                var st = recvStats[i]; var sock = clientSockets.Sockets[i];
+                recvTasks![i] = Task.Run(() => UdpReceiver.RunAsync(sock, st, recvCts.Token));
+            }
         }
 
-        // Correr durante DurationS, reportando tick de progreso cada 200 ms.
         var phaseStart = DateTimeOffset.UtcNow;
         var phaseEnd = phaseStart.AddSeconds(parms.DurationS);
-        ulong lastTotalBytes = 0;
-        var lastTick = phaseStart;
-        while (DateTimeOffset.UtcNow < phaseEnd && !ct.IsCancellationRequested)
-        {
-            try { await Task.Delay(200, ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { break; }
-            var now = DateTimeOffset.UtcNow;
-            ulong totalBytes = 0;
-            foreach (var s in senders) totalBytes += s.BytesSent;
-            var winBytes = totalBytes - lastTotalBytes;
-            var winS = Math.Max(0.001, (now - lastTick).TotalSeconds);
-            var bps = (ulong)(winBytes * 8.0 / winS);
-            var elapsedS = (now - phaseStart).TotalSeconds;
-            onProgress?.Invoke(new ThroughputTickProgress(elapsedS, bps));
-            lastTotalBytes = totalBytes;
-            lastTick = now;
-        }
+        await RunDurationWithProgressAsync(phaseStart, phaseEnd, senders, recvStats, onProgress, ct)
+            .ConfigureAwait(false);
 
         sendCts.Cancel();
-        try { await Task.WhenAll(sendTasks).ConfigureAwait(false); } catch { }
+        if (sendTasks is not null) { try { await Task.WhenAll(sendTasks).ConfigureAwait(false); } catch { } }
 
-        // test_end + udp_stats con packets_sent por stream.
         await controlConnection.SendControlAsync(
             new TestEndMessage(NextRandomId(), new TestEndBody()), ct).ConfigureAwait(false);
 
-        var perStream = new UdpStatsPerStream[parms.Streams];
-        for (var i = 0; i < parms.Streams; i++)
-        {
-            perStream[i] = new UdpStatsPerStream
-            {
-                Stream = i,
-                PacketsSent = senders[i].PacketsSent,
-                BytesSent = senders[i].BytesSent,
-            };
-        }
+        // Grace para paquetes en vuelo antes de parar recv.
+        try { await Task.Delay(300, ct).ConfigureAwait(false); } catch { }
+        recvCts.Cancel();
+        if (recvTasks is not null) { try { await Task.WhenAll(recvTasks).ConfigureAwait(false); } catch { } }
+
+        var phaseDurS = Math.Max(0.001, (DateTimeOffset.UtcNow - phaseStart).TotalSeconds);
+
+        // Reporte completo al host.
+        var myReport = BuildPerStreamReport(parms.Streams, senders, recvStats);
         await controlConnection.SendControlAsync(
             new UdpStatsReportMessage(NextRandomId(),
-                new UdpStatsReportBody { PerStream = perStream }),
+                new UdpStatsReportBody { PerStream = myReport }),
             ct).ConfigureAwait(false);
 
-        // Espera stats del host (por simetría) y result final.
-        try { await router.AwaitUdpStatsReportAsync(10_000, ct).ConfigureAwait(false); }
+        // Esperar reporte del host + result.
+        UdpStatsReportBody? hostReport = null;
+        try { hostReport = await router.AwaitUdpStatsReportAsync(15_000, ct).ConfigureAwait(false); }
         catch { /* no crítico */ }
         var (_, hostResult) = await router.AwaitResultAsync(30_000, ct).ConfigureAwait(false);
-
         var endedAt = DateTimeOffset.UtcNow;
+
         var result = new TestResult
         {
             SessionId = inputs.SessionId,
@@ -130,6 +130,8 @@ public static class UdpMeasurement
             LossPct = hostResult.Udp?.LossPct ?? 0,
             PingSamples = pingStats.Samples.Count,
             Udp = hostResult.Udp,
+            ThroughputUp = hostResult.ThroughputUp,
+            ThroughputDown = hostResult.ThroughputDown,
         };
         onProgress?.Invoke(new FinishedProgress(result));
 
@@ -143,11 +145,6 @@ public static class UdpMeasurement
         return result;
     }
 
-    /// <summary>
-    /// Host side. Pre-condition: <c>test_start</c> ya recibido (lo pasa el caller).
-    /// Abre puertos UDP, manda ack, recibe hasta <c>test_end</c>, construye
-    /// <see cref="ResultBody"/> con UDP stats.
-    /// </summary>
     public static async Task<ResultBody> RunHostAsync(
         IFrameTransport controlConnection,
         ControlMessageRouter router,
@@ -155,11 +152,16 @@ public static class UdpMeasurement
         string sessionId,
         CancellationToken ct)
     {
-        if (parms.Direction != TestDirection.Up)
+        if (parms.Direction == TestDirection.Bidir && parms.BidirMode == BidirMode.Sequential)
         {
             throw LandspeedException.InternalInconsistency(
-                $"UDP sólo soporta Direction=Up; recibido {parms.Direction}");
+                "UDP no soporta bidir secuencial");
         }
+
+        // Host siempre envía si el cliente está en Down/Bidir. Host siempre
+        // recibe si el cliente está en Up/Bidir.
+        var hostSends = parms.Direction is TestDirection.Down or TestDirection.Bidir;
+        var hostRecvs = parms.Direction is TestDirection.Up or TestDirection.Bidir;
 
         var startedAt = DateTimeOffset.UtcNow;
         await using var hostSockets = UdpDataPlane.HostOpen(parms.Streams, IPAddress.IPv6Any);
@@ -171,86 +173,103 @@ public static class UdpMeasurement
                 DataPorts = hostSockets.Ports,
             }), ct).ConfigureAwait(false);
 
-        var stats = new UdpReceiverStats[parms.Streams];
+        // 1) Recibir HELLO_UDP (seq=0) en cada socket → aprendemos endpoint cliente.
+        var stats = hostRecvs ? new UdpReceiverStats[parms.Streams] : null;
+        var endpoints = await UdpDataPlane.HostDrainHelloAsync(
+            hostSockets,
+            timeoutMs: 15_000,
+            onStrayData: hostRecvs
+                ? (idx, r) =>
+                {
+                    if (UdpDataPlane.TryParseHeader(r.Buffer, out var s, out var ts, out _))
+                        stats![idx].OnPacket(s, ts, (ulong)System.Diagnostics.Stopwatch.GetTimestamp(), r.Buffer.Length);
+                }
+                : null,
+            cancellationToken: ct).ConfigureAwait(false);
+
+        // 2) Arrancar senders y/o receivers.
+        using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var recvCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var recvTasks = new Task[parms.Streams];
-        for (var i = 0; i < parms.Streams; i++)
+        var senders = hostSends ? new UdpSender[parms.Streams] : null;
+        var sendTasks = hostSends ? new Task[parms.Streams] : null;
+        var recvTasks = hostRecvs ? new Task[parms.Streams] : null;
+        if (hostRecvs)
         {
-            stats[i] = new UdpReceiverStats();
-            var sock = hostSockets.Sockets[i];
-            var s = stats[i];
-            recvTasks[i] = Task.Run(() => UdpReceiver.RunAsync(sock, s, recvCts.Token));
+            stats ??= new UdpReceiverStats[parms.Streams];
+            for (var i = 0; i < parms.Streams; i++)
+            {
+                stats[i] ??= new UdpReceiverStats();
+                var s = stats[i]; var sock = hostSockets.Sockets[i];
+                recvTasks![i] = Task.Run(() => UdpReceiver.RunAsync(sock, s, recvCts.Token));
+            }
+        }
+        if (hostSends)
+        {
+            var per = (parms.TargetBitrateBps ?? 0) > 0
+                ? (parms.TargetBitrateBps!.Value) / (ulong)Math.Max(1, parms.Streams)
+                : 0UL;
+            for (var i = 0; i < parms.Streams; i++)
+            {
+                senders![i] = new UdpSender();
+                var s = senders[i]; var sock = hostSockets.Sockets[i];
+                var ep = endpoints[i]; var idx = (ushort)i;
+                sendTasks![i] = Task.Run(() => s.RunAsync(
+                    sock, ep, idx, parms.PayloadSize, per, sendCts.Token));
+            }
         }
 
+        // 3) Esperar test_end del cliente.
         await router.AwaitTestEndAsync(120_000, ct).ConfigureAwait(false);
 
-        UdpStatsReportBody? clientReport = null;
-        try { clientReport = await router.AwaitUdpStatsReportAsync(10_000, ct).ConfigureAwait(false); }
-        catch { /* seguimos sin reporte → loss reportado como 0 */ }
+        sendCts.Cancel();
+        if (sendTasks is not null) { try { await Task.WhenAll(sendTasks).ConfigureAwait(false); } catch { } }
 
-        // Grace period para paquetes en vuelo.
-        try { await Task.Delay(200, ct).ConfigureAwait(false); } catch { }
+        // Grace para paquetes últimos.
+        try { await Task.Delay(300, ct).ConfigureAwait(false); } catch { }
         recvCts.Cancel();
-        try { await Task.WhenAll(recvTasks).ConfigureAwait(false); } catch { }
+        if (recvTasks is not null) { try { await Task.WhenAll(recvTasks).ConfigureAwait(false); } catch { } }
+
+        // 4) Reporte de stats al cliente.
+        var myReport = BuildPerStreamReport(parms.Streams, senders, stats);
+        await controlConnection.SendControlAsync(
+            new UdpStatsReportMessage(NextRandomId(),
+                new UdpStatsReportBody { PerStream = myReport }),
+            ct).ConfigureAwait(false);
+
+        // 5) Reporte del cliente.
+        UdpStatsReportBody? clientReport = null;
+        try { clientReport = await router.AwaitUdpStatsReportAsync(15_000, ct).ConfigureAwait(false); }
+        catch { /* seguimos sin */ }
 
         var endedAt = DateTimeOffset.UtcNow;
         var durationS = Math.Max(0.001, (endedAt - startedAt).TotalSeconds);
 
-        ulong totalReceived = 0, totalBytes = 0, totalReorder = 0, totalDup = 0;
-        double jitterSum = 0;
-        foreach (var s in stats)
+        // 6) Agregar por dirección.
+        var (upUdp, downUdp, aggUdp, upBps, downBps, perUp, perDown) = Aggregate(
+            parms, myReport, clientReport, durationS);
+
+        // Throughput "headline" depende de la dirección.
+        ulong meanBps, peakBps;
+        IReadOnlyList<ulong> perStreamBps;
+        ThroughputBody? thUp = null, thDown = null;
+        switch (parms.Direction)
         {
-            totalReceived += s.PacketsReceived;
-            totalBytes += s.BytesReceived;
-            totalReorder += s.ReorderCount;
-            totalDup += s.DuplicateCount;
-            jitterSum += s.JitterNs;
+            case TestDirection.Up:
+                meanBps = upBps; peakBps = upBps; perStreamBps = perUp;
+                break;
+            case TestDirection.Down:
+                meanBps = downBps; peakBps = downBps; perStreamBps = perDown;
+                break;
+            case TestDirection.Bidir:
+                meanBps = upBps + downBps;
+                peakBps = Math.Max(upBps, downBps);
+                perStreamBps = perUp;
+                thUp = new ThroughputBody { MeanBps = upBps, PeakBps = upBps, PerStreamBps = perUp };
+                thDown = new ThroughputBody { MeanBps = downBps, PeakBps = downBps, PerStreamBps = perDown };
+                break;
+            default:
+                throw LandspeedException.InternalInconsistency($"dir desconocida {parms.Direction}");
         }
-        var jitterMs = stats.Length > 0 ? (jitterSum / stats.Length) / 1_000_000.0 : 0;
-
-        ulong totalSent = 0;
-        if (clientReport is not null)
-        {
-            foreach (var p in clientReport.PerStream) totalSent += p.PacketsSent;
-        }
-        var packetsLost = totalSent > totalReceived ? totalSent - totalReceived : 0UL;
-        var lossPct = totalSent > 0 ? packetsLost * 100.0 / totalSent : 0;
-        var reorderPct = totalReceived > 0 ? totalReorder * 100.0 / totalReceived : 0;
-
-        var meanBps = (ulong)(totalBytes * 8.0 / durationS);
-        var perStreamBps = stats.Select(s => (ulong)(s.BytesReceived * 8.0 / durationS)).ToArray();
-
-        var target = parms.TargetBitrateBps ?? 0;
-        var missPct = target > 0
-            ? Math.Abs((double)meanBps - (double)target) * 100.0 / target
-            : 0;
-
-        var udp = new UdpStatsBody
-        {
-            PacketsSent = totalSent,
-            PacketsReceived = totalReceived,
-            PacketsLost = packetsLost,
-            LossPct = lossPct,
-            ReorderCount = totalReorder,
-            ReorderPct = reorderPct,
-            DuplicateCount = totalDup,
-            JitterMs = jitterMs,
-            OwdMs = null,
-            TargetBitrateBps = target,
-            BitrateMissPct = missPct,
-        };
-
-        // Enviar nuestro udp_stats (host sólo recibió → per-stream vacíos).
-        var hostPerStream = Enumerable.Range(0, parms.Streams).Select(i => new UdpStatsPerStream
-        {
-            Stream = i,
-            PacketsSent = 0,
-            BytesSent = 0,
-        }).ToArray();
-        await controlConnection.SendControlAsync(
-            new UdpStatsReportMessage(NextRandomId(),
-                new UdpStatsReportBody { PerStream = hostPerStream }),
-            ct).ConfigureAwait(false);
 
         var body = new ResultBody
         {
@@ -263,20 +282,168 @@ public static class UdpMeasurement
             Throughput = new ThroughputBody
             {
                 MeanBps = meanBps,
-                PeakBps = meanBps,
+                PeakBps = peakBps,
                 PerStreamBps = perStreamBps,
             },
             LatencyMs = new LatencyBody { Min = 0, Avg = 0, Max = 0, P95 = 0 },
-            JitterMs = jitterMs,
-            LossPct = lossPct,
-            Samples = (int)Math.Min(totalReceived, int.MaxValue),
-            Udp = udp,
+            JitterMs = aggUdp.JitterMs,
+            LossPct = aggUdp.LossPct,
+            Samples = (int)Math.Min(aggUdp.PacketsReceived, int.MaxValue),
+            ThroughputUp = thUp,
+            ThroughputDown = thDown,
+            Udp = aggUdp,
             ProtocolVersion = ProtocolVersion.Current,
         };
 
         await controlConnection.SendControlAsync(
             new ResultMessage(NextRandomId(), body), ct).ConfigureAwait(false);
         return body;
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static async Task RunDurationWithProgressAsync(
+        DateTimeOffset phaseStart,
+        DateTimeOffset phaseEnd,
+        UdpSender[]? senders,
+        UdpReceiverStats[]? recvStats,
+        Action<MeasurementProgress>? onProgress,
+        CancellationToken ct)
+    {
+        ulong lastBytes = 0;
+        var lastTick = phaseStart;
+        while (DateTimeOffset.UtcNow < phaseEnd && !ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(200, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
+            var now = DateTimeOffset.UtcNow;
+            ulong total = 0;
+            if (senders is not null) foreach (var s in senders) total += s.BytesSent;
+            if (recvStats is not null) foreach (var s in recvStats) total += s.BytesReceived;
+            var winBytes = total - lastBytes;
+            var winS = Math.Max(0.001, (now - lastTick).TotalSeconds);
+            var bps = (ulong)(winBytes * 8.0 / winS);
+            var elapsedS = (now - phaseStart).TotalSeconds;
+            onProgress?.Invoke(new ThroughputTickProgress(elapsedS, bps));
+            lastBytes = total; lastTick = now;
+        }
+    }
+
+    private static UdpStatsPerStream[] BuildPerStreamReport(
+        int streams, UdpSender[]? senders, UdpReceiverStats[]? recvStats)
+    {
+        var arr = new UdpStatsPerStream[streams];
+        for (var i = 0; i < streams; i++)
+        {
+            arr[i] = new UdpStatsPerStream
+            {
+                Stream = i,
+                PacketsSent = senders?[i].PacketsSent ?? 0,
+                BytesSent = senders?[i].BytesSent ?? 0,
+                PacketsReceived = recvStats?[i].PacketsReceived ?? 0,
+                BytesReceived = recvStats?[i].BytesReceived ?? 0,
+                ReorderCount = recvStats?[i].ReorderCount ?? 0,
+                DuplicateCount = recvStats?[i].DuplicateCount ?? 0,
+                JitterNs = recvStats?[i].JitterNs ?? 0,
+            };
+        }
+        return arr;
+    }
+
+    private sealed record DirAgg(ulong Sent, ulong Received, ulong Bytes, ulong Reorder, ulong Dup, double JitterNs);
+
+    private static DirAgg SumStreams(IReadOnlyList<UdpStatsPerStream>? r)
+    {
+        if (r is null) return new DirAgg(0, 0, 0, 0, 0, 0);
+        ulong s = 0, rec = 0, b = 0, ro = 0, d = 0; double j = 0;
+        foreach (var p in r) { s += p.PacketsSent; rec += p.PacketsReceived; b += p.BytesReceived;
+            ro += p.ReorderCount; d += p.DuplicateCount; j += p.JitterNs; }
+        return new DirAgg(s, rec, b, ro, d, r.Count == 0 ? 0 : j / r.Count);
+    }
+
+    private static (UdpStatsBody? up, UdpStatsBody? down, UdpStatsBody agg,
+                    ulong upBps, ulong downBps,
+                    IReadOnlyList<ulong> perUp, IReadOnlyList<ulong> perDown)
+        Aggregate(
+            TestStartBody parms,
+            IReadOnlyList<UdpStatsPerStream> hostReport,
+            UdpStatsReportBody? clientReport,
+            double durationS)
+    {
+        // hostReport = lo que el host midió (sent host→client, recv client→host).
+        // clientReport = lo que el cliente midió (sent client→host, recv host→client).
+        var hAgg = SumStreams(hostReport);
+        var cAgg = SumStreams(clientReport?.PerStream);
+
+        // Up = client→host. Sent: cliente. Received: host.
+        ulong upSent = cAgg.Sent, upRecv = hAgg.Received, upBytes = hAgg.Bytes;
+        ulong upLost = upSent > upRecv ? upSent - upRecv : 0;
+        double upLossPct = upSent > 0 ? upLost * 100.0 / upSent : 0;
+        double upJitterMs = hAgg.JitterNs / 1_000_000.0;
+        ulong upBps = (ulong)(upBytes * 8.0 / durationS);
+        var perUp = hostReport.Select(p => (ulong)(p.BytesReceived * 8.0 / durationS)).ToArray();
+
+        // Down = host→client. Sent: host. Received: cliente.
+        ulong dnSent = hAgg.Sent, dnRecv = cAgg.Received, dnBytes = cAgg.Bytes;
+        ulong dnLost = dnSent > dnRecv ? dnSent - dnRecv : 0;
+        double dnLossPct = dnSent > 0 ? dnLost * 100.0 / dnSent : 0;
+        double dnJitterMs = cAgg.JitterNs / 1_000_000.0;
+        ulong dnBps = (ulong)(dnBytes * 8.0 / durationS);
+        var perDown = clientReport?.PerStream
+            .Select(p => (ulong)(p.BytesReceived * 8.0 / durationS)).ToArray()
+            ?? new ulong[parms.Streams];
+
+        var target = parms.TargetBitrateBps ?? 0;
+        UdpStatsBody? up = null, down = null;
+        double missPct(ulong m) => target > 0 ? Math.Abs((double)m - (double)target) * 100.0 / target : 0;
+
+        if (parms.Direction is TestDirection.Up or TestDirection.Bidir)
+        {
+            up = new UdpStatsBody
+            {
+                PacketsSent = upSent, PacketsReceived = upRecv, PacketsLost = upLost,
+                LossPct = upLossPct,
+                ReorderCount = hAgg.Reorder, ReorderPct = upRecv > 0 ? hAgg.Reorder * 100.0 / upRecv : 0,
+                DuplicateCount = hAgg.Dup,
+                JitterMs = upJitterMs, OwdMs = null,
+                TargetBitrateBps = target, BitrateMissPct = missPct(upBps),
+            };
+        }
+        if (parms.Direction is TestDirection.Down or TestDirection.Bidir)
+        {
+            down = new UdpStatsBody
+            {
+                PacketsSent = dnSent, PacketsReceived = dnRecv, PacketsLost = dnLost,
+                LossPct = dnLossPct,
+                ReorderCount = cAgg.Reorder, ReorderPct = dnRecv > 0 ? cAgg.Reorder * 100.0 / dnRecv : 0,
+                DuplicateCount = cAgg.Dup,
+                JitterMs = dnJitterMs, OwdMs = null,
+                TargetBitrateBps = target, BitrateMissPct = missPct(dnBps),
+            };
+        }
+
+        UdpStatsBody agg = parms.Direction switch
+        {
+            TestDirection.Up   => up!,
+            TestDirection.Down => down!,
+            TestDirection.Bidir => new UdpStatsBody
+            {
+                PacketsSent = upSent + dnSent,
+                PacketsReceived = upRecv + dnRecv,
+                PacketsLost = upLost + dnLost,
+                LossPct = (upLossPct + dnLossPct) / 2,
+                ReorderCount = hAgg.Reorder + cAgg.Reorder,
+                ReorderPct = (up!.ReorderPct + down!.ReorderPct) / 2,
+                DuplicateCount = hAgg.Dup + cAgg.Dup,
+                JitterMs = (upJitterMs + dnJitterMs) / 2,
+                OwdMs = null,
+                TargetBitrateBps = target,
+                BitrateMissPct = missPct(upBps + dnBps),
+            },
+            _ => throw LandspeedException.InternalInconsistency($"dir {parms.Direction}"),
+        };
+
+        return (up, down, agg, upBps, dnBps, perUp, perDown);
     }
 
     private static ulong NextRandomId() =>

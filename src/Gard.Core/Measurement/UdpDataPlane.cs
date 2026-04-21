@@ -77,6 +77,44 @@ public static class UdpDataPlane
         }
     }
 
+    /// <summary>
+    /// Espera HELLO_UDP (seq=0) en cada socket host y devuelve el endpoint
+    /// remoto aprendido. Cualquier paquete que no sea HELLO se devuelve al
+    /// caller via <paramref name="onStrayData"/> para no perder payload si el
+    /// cliente ya empezó a enviar (up/bidir). Timeout global en ms.
+    /// </summary>
+    public static async Task<IPEndPoint[]> HostDrainHelloAsync(
+        UdpHostSockets hostSockets,
+        int timeoutMs,
+        Action<int, UdpReceiveResult>? onStrayData,
+        CancellationToken cancellationToken = default)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeoutMs);
+        var endpoints = new IPEndPoint[hostSockets.Sockets.Count];
+        var tasks = new Task[hostSockets.Sockets.Count];
+        for (var i = 0; i < hostSockets.Sockets.Count; i++)
+        {
+            var idx = i;
+            var sock = hostSockets.Sockets[i];
+            tasks[i] = Task.Run(async () =>
+            {
+                while (!timeoutCts.IsCancellationRequested)
+                {
+                    var r = await sock.ReceiveAsync(timeoutCts.Token).ConfigureAwait(false);
+                    if (TryParseHeader(r.Buffer, out var seq, out _, out _) && seq == 0)
+                    {
+                        endpoints[idx] = r.RemoteEndPoint;
+                        return;
+                    }
+                    onStrayData?.Invoke(idx, r);
+                }
+            });
+        }
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+        return endpoints;
+    }
+
     /// <summary>Conecta N sockets UDP a los puertos del host y envía HELLO_UDP (seq=0).</summary>
     public static async Task<UdpClientSockets> ClientConnectAsync(
         string host, IReadOnlyList<int> ports, int streamsCount, CancellationToken cancellationToken = default)
@@ -203,8 +241,22 @@ public sealed class UdpSender
     public ulong PacketsSent { get; private set; }
     public ulong BytesSent { get; private set; }
 
+    public Task RunAsync(
+        UdpClient socket,
+        ushort streamId,
+        int payloadSize,
+        ulong targetBitrateBps,
+        CancellationToken cancellationToken)
+        => RunAsync(socket, target: null, streamId, payloadSize, targetBitrateBps, cancellationToken);
+
+    /// <summary>
+    /// <paramref name="target"/> = null ⇒ el socket viene <c>Connect()</c>-ado
+    /// (cliente). Si no, se envía vía <c>SendAsync(buf, target)</c> (host
+    /// enviando al endpoint aprendido por HELLO_UDP).
+    /// </summary>
     public async Task RunAsync(
         UdpClient socket,
+        IPEndPoint? target,
         ushort streamId,
         int payloadSize,
         ulong targetBitrateBps,
@@ -246,7 +298,10 @@ public sealed class UdpSender
             UdpDataPlane.WriteHeader(buf, seq, MonotonicClock.NowNs(), streamId);
             try
             {
-                await socket.SendAsync(buf, cancellationToken).ConfigureAwait(false);
+                if (target is null)
+                    await socket.SendAsync(buf, cancellationToken).ConfigureAwait(false);
+                else
+                    await socket.SendAsync(buf, target, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { return; }
             catch (SocketException) { /* peer cerró; seguimos por si se recupera */ continue; }

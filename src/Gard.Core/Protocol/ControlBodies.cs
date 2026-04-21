@@ -235,4 +235,10 @@ public sealed record UdpStatsPerStream
     public required int Stream { get; init; }
     public required ulong PacketsSent { get; init; }
     public required ulong BytesSent { get; init; }
+    // LSP/1.2: extendido para bidir. Valor 0 ⇒ ese lado no recibió.
+    public ulong PacketsReceived { get; init; }
+    public ulong BytesReceived { get; init; }
+    public ulong ReorderCount { get; init; }
+    public ulong DuplicateCount { get; init; }
+    public double JitterNs { get; init; }
 }

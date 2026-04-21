@@ -257,8 +257,9 @@ static async Task<int> RunTestAsync(string[] a)
         "udp" => TestTransport.Udp,
         _ => throw new ArgumentException($"--transport debe ser tcp|udp (recibido: {transStr})"),
     };
-    if (transport == TestTransport.Udp && direction != TestDirection.Up)
-        return Fail("UDP actualmente sólo soporta --direction up (LSP/1.2 inicial)");
+    if (transport == TestTransport.Udp && direction == TestDirection.Bidir
+        && bidirMStr == "sequential")
+        return Fail("UDP no soporta --bidir-mode sequential (sólo simultaneous)");
     if (transport == TestTransport.Udp && payload > Gard.Core.Measurement.UdpDataPlane.MaxPayloadSize)
         return Fail($"UDP --payload debe ser <= {Gard.Core.Measurement.UdpDataPlane.MaxPayloadSize}");
     var bidirMode = bidirMStr switch
