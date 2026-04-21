@@ -20,11 +20,16 @@ Packaged binaries (`.deb`, Homebrew tap, Windows zip) will be published with the
 ```sh
 git clone https://github.com/gard-net/gard.git
 cd gard
-dotnet publish src/Gard.Cli -c Release -r <rid> -p:PublishAot=true -o ./out
+dotnet publish src/Gard.Cli -c Release -r <rid> \
+  --self-contained -p:PublishSingleFile=true -o ./out
 ./out/gard --help
 ```
 
 Where `<rid>` is `linux-x64`, `osx-arm64`, `osx-x64` or `win-x64`.
+
+> AOT-compiled binaries (~15 MB) are planned for v0.2; v0.1 ships
+> self-contained single-file builds (~60 MB) so the protocol core can
+> keep its reflection-based JSON path without risk.
 
 ## Usage (preview)
 
