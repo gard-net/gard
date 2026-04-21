@@ -231,10 +231,6 @@ run_cell() {
             local out; out="$(run_iperf3 "$direction" "$streams" "$duration" "$payload" "$transport" "$bitrate")"
             IFS=',' read -r tp jit loss <<< "$(echo "$out" | parse_iperf3)"
         else
-            if [[ "$transport" == udp && "$direction" != up ]]; then
-                echo "    SKIP gard udp — sólo direction=up soportado (LSP/1.2 inicial)"
-                continue
-            fi
             local out; out="$(run_gard "$direction" "$streams" "$duration" "$payload" "$transport" "$bitrate")"
             IFS=',' read -r tp jit loss ping_avg ping_p95 rtt_p95 <<< "$(echo "$out" | parse_gard)"
         fi

@@ -16,7 +16,9 @@ down,1,30,16384,tcp,0,3
 down,1,30,65536,tcp,0,3
 down,1,30,262144,tcp,0,3
 #
-# Fase 2 — UDP (LSP/1.2, sólo direction=up en esta versión: cliente envía, host mide).
+# Fase 2 — UDP (LSP/1.2). Soporta up/down/bidir — por ahora la matriz sólo
+# ejercita up para mantener tiempo acotado; agregar celdas manualmente según
+# necesidad.
 up,1,20,1200,udp,10000000,3
 up,1,20,1200,udp,100000000,3
 up,1,20,1200,udp,500000000,3
