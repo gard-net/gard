@@ -1,0 +1,23 @@
+# Matriz de benchmarks gard vs iperf3.
+# Formato: direction, streams, duration_s, payload, transport, target_bitrate_bps, reps
+# - transport: tcp | udp  (udp requiere gard LSP/1.2 y iperf3 -u)
+# - target_bitrate_bps: 0 = unlimited (solo relevante para udp). tcp ignora este campo.
+# - Comentarios con '#' al inicio de linea.
+#
+# Fase 1 — baseline TCP (cable)
+direction,streams,duration_s,payload,transport,target_bitrate_bps,reps
+down,1,20,65536,tcp,0,3
+down,4,20,65536,tcp,0,3
+up,1,20,65536,tcp,0,3
+up,4,20,65536,tcp,0,3
+bidir,1,20,65536,tcp,0,3
+bidir,4,20,65536,tcp,0,3
+down,1,30,16384,tcp,0,3
+down,1,30,65536,tcp,0,3
+down,1,30,262144,tcp,0,3
+#
+# Fase 2 — UDP (requiere LSP/1.2)
+# down,1,20,1200,udp,10000000,3
+# down,1,20,1200,udp,100000000,3
+# down,1,20,1200,udp,500000000,3
+# down,1,20,1200,udp,0,3
