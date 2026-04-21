@@ -36,6 +36,7 @@ public class CapabilitiesTests
         Assert.True(c.HasFlag(Capabilities.DataEcho));
         Assert.True(c.HasFlag(Capabilities.BidirSequential));
         Assert.True(c.HasFlag(Capabilities.IntervalReporting));
+        Assert.True(c.HasFlag(Capabilities.UdpDataPlane));
         Assert.False(c.HasFlag(Capabilities.Tls));
     }
 
@@ -61,10 +62,11 @@ public class CapabilitiesTests
     [Fact]
     public void DefaultV1_HasExactHexValue()
     {
-        // 0xFB = todos los bits salvo TLS (0x04):
+        // 0x1FB = todos los bits salvo TLS (0x04), incluye UdpDataPlane (0x100):
         // ParallelStreams(0x01) | Bidirectional(0x02) | Pairing(0x08) | ClockSync(0x10)
         //  | DataEcho(0x20) | BidirSequential(0x40) | IntervalReporting(0x80)
-        Assert.Equal("fb", Capabilities.DefaultV1.ToHexString());
+        //  | UdpDataPlane(0x100)
+        Assert.Equal("1fb", Capabilities.DefaultV1.ToHexString());
     }
 }
 

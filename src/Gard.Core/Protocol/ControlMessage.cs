@@ -54,3 +54,7 @@ public sealed record GoodbyeMessage(ulong Id, GoodbyeBody Body) : ControlMessage
 
 public sealed record ErrorMessage(ulong Id, ErrorBody Body) : ControlMessage(Id)
 { public override string T => "error"; }
+
+/// <summary>LSP/1.2: emisor UDP reporta contadores por stream tras test_end.</summary>
+public sealed record UdpStatsReportMessage(ulong Id, UdpStatsReportBody Body) : ControlMessage(Id)
+{ public override string T => "udp_stats"; }

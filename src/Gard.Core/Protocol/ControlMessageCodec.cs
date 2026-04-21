@@ -59,6 +59,7 @@ public static class ControlMessageCodec
             ResultMessage m        => m.Body,
             GoodbyeMessage m       => m.Body,
             ErrorMessage m         => m.Body,
+            UdpStatsReportMessage m => m.Body,
             _ => throw LandspeedException.InternalInconsistency($"tipo de ControlMessage desconocido: {message.GetType()}"),
         };
 
@@ -137,6 +138,7 @@ public static class ControlMessageCodec
             "result"         => Make<ResultBody>((i, b) => new ResultMessage(i, b)),
             "goodbye"        => Make<GoodbyeBody>((i, b) => new GoodbyeMessage(i, b)),
             "error"          => Make<ErrorBody>((i, b) => new ErrorMessage(i, b)),
+            "udp_stats"      => Make<UdpStatsReportBody>((i, b) => new UdpStatsReportMessage(i, b)),
             _ => throw LandspeedException.UnknownControlMessageType(t),
         };
     }

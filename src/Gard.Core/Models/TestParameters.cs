@@ -14,6 +14,10 @@ public sealed record TestParameters
     public BidirMode? BidirMode { get; init; }
     /// <summary>LSP/1.1: pausa entre up y down en modo secuencial.</summary>
     public double? GapS { get; init; }
+    /// <summary>LSP/1.2: transport del data-plane. Default TCP.</summary>
+    public TestTransport Transport { get; init; } = TestTransport.Tcp;
+    /// <summary>LSP/1.2: ritmo objetivo en bps (0 = sin límite). Sólo relevante si Transport == Udp.</summary>
+    public ulong TargetBitrateBps { get; init; } = 0;
 
     public TestStartBody AsWireBody() => new()
     {
@@ -24,5 +28,7 @@ public sealed record TestParameters
         WarmupS = WarmupS,
         BidirMode = BidirMode,
         GapS = GapS,
+        Transport = Transport == TestTransport.Tcp ? null : Transport,
+        TargetBitrateBps = Transport == TestTransport.Udp ? TargetBitrateBps : null,
     };
 }

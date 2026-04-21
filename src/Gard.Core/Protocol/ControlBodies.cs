@@ -74,6 +74,10 @@ public sealed record TestStartBody
     public BidirMode? BidirMode { get; init; }
     /// <summary>LSP/1.1. Pausa entre up y down en modo secuencial.</summary>
     public double? GapS { get; init; }
+    /// <summary>LSP/1.2. Transport del plano de datos. null ⇒ tcp (compat 1.0/1.1).</summary>
+    public TestTransport? Transport { get; init; }
+    /// <summary>LSP/1.2. Ritmo objetivo en bps (0 = sin límite). Sólo udp.</summary>
+    public ulong? TargetBitrateBps { get; init; }
 }
 
 public sealed record TestStartAckBody
@@ -135,6 +139,8 @@ public sealed record ResultBody
     public ThroughputBody? ThroughputUp { get; init; }
     /// <summary>LSP/1.1. Throughput fase down en bidir secuencial.</summary>
     public ThroughputBody? ThroughputDown { get; init; }
+    /// <summary>LSP/1.2. Métricas del data-plane UDP; null si el test fue TCP.</summary>
+    public UdpStatsBody? Udp { get; init; }
     public required ProtocolVersion ProtocolVersion { get; init; }
 }
 
@@ -186,4 +192,47 @@ public sealed record IntervalReport
     public required int WindowMs { get; init; }
     public required IReadOnlyList<IntervalSample> Samples { get; init; }
     public required IntervalStats Stats { get; init; }
+}
+
+// ─── LSP/1.2: métricas del data-plane UDP ───────────────────────────────────
+
+public sealed record OwdBody
+{
+    public required double Min { get; init; }
+    public required double Median { get; init; }
+    public required double P95 { get; init; }
+    public required double Max { get; init; }
+}
+
+public sealed record UdpStatsBody
+{
+    public required ulong PacketsSent { get; init; }
+    public required ulong PacketsReceived { get; init; }
+    public required ulong PacketsLost { get; init; }
+    public required double LossPct { get; init; }
+    public required ulong ReorderCount { get; init; }
+    public required double ReorderPct { get; init; }
+    public required ulong DuplicateCount { get; init; }
+    public required double JitterMs { get; init; }
+    /// <summary>One-way delay. Null si no hay clock sync disponible.</summary>
+    public OwdBody? OwdMs { get; init; }
+    public required ulong TargetBitrateBps { get; init; }
+    public required double BitrateMissPct { get; init; }
+}
+
+/// <summary>
+/// Nuevo en LSP/1.2: tras <c>test_end</c> el emisor UDP reporta al peer
+/// contrario cuántos paquetes envió por stream, para que el receptor calcule
+/// pérdida sin ambigüedad.
+/// </summary>
+public sealed record UdpStatsReportBody
+{
+    public required IReadOnlyList<UdpStatsPerStream> PerStream { get; init; }
+}
+
+public sealed record UdpStatsPerStream
+{
+    public required int Stream { get; init; }
+    public required ulong PacketsSent { get; init; }
+    public required ulong BytesSent { get; init; }
 }

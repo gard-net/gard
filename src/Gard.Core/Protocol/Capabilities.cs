@@ -21,15 +21,16 @@ public enum Capabilities : uint
     DataEcho           = 0x0020,
     BidirSequential    = 0x0040,
     IntervalReporting  = 0x0080,
+    UdpDataPlane       = 0x0100,
 
     /// <summary>
-    /// Capacidades típicas anunciadas por un peer LSP/1.x (incluye bits de 1.1).
+    /// Capacidades típicas anunciadas por un peer LSP/1.x (incluye bits de 1.1 y 1.2).
     /// Idéntico a <c>Capabilities.defaultV1</c> de la app Apple. TLS queda fuera:
     /// la app de referencia aún no lo implementa (spec §7).
     /// </summary>
     DefaultV1 =
         ParallelStreams | Bidirectional | Pairing | ClockSync |
-        DataEcho | BidirSequential | IntervalReporting,
+        DataEcho | BidirSequential | IntervalReporting | UdpDataPlane,
 }
 
 public static class CapabilitiesExtensions

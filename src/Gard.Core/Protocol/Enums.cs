@@ -35,3 +35,11 @@ public enum BidirMode
     [JsonStringEnumMemberName("simultaneous")] Simultaneous,
     [JsonStringEnumMemberName("sequential")]   Sequential,
 }
+
+/// <summary>LSP/1.2: transport del plano de datos. El control sigue siempre en TCP.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<TestTransport>))]
+public enum TestTransport
+{
+    [JsonStringEnumMemberName("tcp")] Tcp,
+    [JsonStringEnumMemberName("udp")] Udp,
+}

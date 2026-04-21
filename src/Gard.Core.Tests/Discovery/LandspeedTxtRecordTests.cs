@@ -20,8 +20,8 @@ public class LandspeedTxtRecordTests
         Assert.Equal("1", attrs["v"]);
         Assert.Equal("MyMac", attrs["name"]);
         Assert.Equal("macos", attrs["platform"]);
-        // DefaultV1 = 0xFB (spec).
-        Assert.Equal("fb", attrs["caps"]);
+        // DefaultV1 = 0x1FB (spec, incluye UdpDataPlane).
+        Assert.Equal("1fb", attrs["caps"]);
     }
 
     [Fact]
