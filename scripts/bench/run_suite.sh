@@ -157,8 +157,8 @@ parse_iperf3() {
     # echo: throughput_mbps,jitter_ms,loss_pct
     jq -r '
         if .end then
-            [ (if .end.sum_bidir_recv then
-                 ((.end.sum_bidir_recv.bits_per_second // 0) + (.end.sum_bidir_send.bits_per_second // 0)) / 1e6
+            [ (if .end.sum_received_bidir_reverse then
+                 ((.end.sum_received.bits_per_second // 0) + (.end.sum_received_bidir_reverse.bits_per_second // 0)) / 1e6
                elif .end.sum_received then
                  (.end.sum_received.bits_per_second // 0) / 1e6
                elif .end.sum then

@@ -31,3 +31,4 @@ out/
 
 # Benchmark run outputs (generados localmente, no versionados).
 docs/benchmarks/runs/
+.claude/scheduled_tasks.lock
