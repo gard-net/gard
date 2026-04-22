@@ -71,6 +71,44 @@ public class UdpDataPlaneTests
         Assert.True(jitterMs < 10.0, $"jitter muy alto en loopback: {jitterMs:F2} ms");
     }
 
+    /// <summary>
+    /// Regresión para el bug de 0.2.0: el sender UDP ignoraba target_bitrate_bps
+    /// por usar <c>Task.Delay(1)</c> con granularidad ~15 ms en Windows. Tras el
+    /// fix (nextDueNs + busy-wait) el régimen efectivo debería estar a ≥ 85 %
+    /// del target. Usamos 50 Mbps × 1 s: suficiente para descartar el bug
+    /// (que daba ~0.5 %) sin estresar CI.
+    /// </summary>
+    [Fact]
+    public async Task Sender_PacesAtTargetBps_Within15Pct()
+    {
+        const ulong targetBps = 50_000_000UL;
+        const int payload = 1200;
+
+        await using var host = UdpDataPlane.HostOpen(count: 1, bindAddress: IPAddress.Loopback);
+        await using var client = await UdpDataPlane.ClientConnectAsync(
+            "127.0.0.1", host.Ports, streamsCount: 1);
+
+        using var helloCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        _ = await host.Sockets[0].ReceiveAsync(helloCts.Token); // drain HELLO
+
+        using var cts = new CancellationTokenSource();
+        var sender = new UdpSender();
+        var sendTask = Task.Run(() => sender.RunAsync(
+            client.Sockets[0], streamId: 0, payloadSize: payload,
+            targetBitrateBps: targetBps, cts.Token));
+
+        var start = DateTimeOffset.UtcNow;
+        await Task.Delay(1000);
+        cts.Cancel();
+        try { await sendTask; } catch { }
+        var elapsedS = (DateTimeOffset.UtcNow - start).TotalSeconds;
+
+        var sentBps = sender.BytesSent * 8.0 / elapsedS;
+        var ratio = sentBps / targetBps;
+        Assert.True(ratio >= 0.85,
+            $"sender no alcanzó el target: {sentBps / 1e6:F1} Mbps vs {targetBps / 1e6:F1} Mbps (ratio {ratio:F3})");
+    }
+
     [Fact]
     public void UdpReceiverStats_DetectsDuplicateAndReorder()
     {

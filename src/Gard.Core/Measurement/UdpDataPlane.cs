@@ -247,8 +247,17 @@ public sealed class UdpReceiverStats
 }
 
 /// <summary>
-/// Emisor UDP con token bucket opcional para respetar un target bitrate.
-/// <paramref name="targetBitrateBps"/> = 0 ⇒ sin límite (rafaga continua).
+/// Emisor UDP con pacing opcional por stream. <paramref name="targetBitrateBps"/>
+/// es el bitrate deseado para ESTE stream (igual semántica que la referencia
+/// Swift — no se divide por número de streams). <c>0</c> ⇒ sin límite.
+///
+/// Pacing: deadline-based (<c>nextDueNs = start + seq × nsPerPacket</c>).
+/// Para huecos ≥ 2 ms usamos <see cref="Task.Delay"/>; por debajo, busy-wait
+/// contra <see cref="MonotonicClock"/>. Motivo: <c>Task.Delay(1)</c> tiene
+/// granularidad ~15 ms en Windows por default, rompiendo el ritmo a altas
+/// tasas (≳ 100 pkt/ms). Si el envío se atrasa, no dormimos: intentamos
+/// alcanzar el deadline, pero no acumulamos deuda más allá de 50 ms para
+/// no generar ráfagas enormes tras una pausa del socket.
 /// </summary>
 public sealed class UdpSender
 {
@@ -276,37 +285,54 @@ public sealed class UdpSender
         ulong targetBitrateBps,
         CancellationToken cancellationToken)
     {
+        // Nos salimos del thread del caller antes de hacer nada. Sin esto, si
+        // SendAsync completa sincrónicamente (loopback) el while se ejecuta
+        // sync en el caller y nunca le devolvemos control — el test queda
+        // colgado en sender.RunAsync antes de que Task.Delay(…) llegue a correr.
+        await Task.Yield();
+
         var buf = new byte[payloadSize];
         Random.Shared.NextBytes(buf); // padding pseudo-aleatorio, header se reescribe por paquete
 
         ulong seq = 1;
-        // Token bucket: acumula bytes permitidos; cuando < packetSize, duerme.
-        double tokensBits = 0;
-        var lastTick = MonotonicClock.NowNs();
-        var packetBits = (double)payloadSize * 8;
+        var nsPerPacket = targetBitrateBps > 0
+            ? (ulong)((double)payloadSize * 8.0 * 1_000_000_000.0 / targetBitrateBps)
+            : 0UL;
+        var nextDueNs = MonotonicClock.NowNs();
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (targetBitrateBps > 0)
+            if (nsPerPacket > 0)
             {
                 var now = MonotonicClock.NowNs();
-                var elapsedS = (now - lastTick) / 1_000_000_000.0;
-                lastTick = now;
-                tokensBits += elapsedS * targetBitrateBps;
-                // Cap el bucket a ~10ms worth para no hacer rafagas gigantes tras pausas.
-                var cap = targetBitrateBps * 0.01;
-                if (tokensBits > cap) tokensBits = cap;
-
-                if (tokensBits < packetBits)
+                if (now < nextDueNs)
                 {
-                    // Calcula cuánto tiempo esperar hasta tener un paquete.
-                    var needBits = packetBits - tokensBits;
-                    var waitMs = Math.Max(1, (int)Math.Ceiling(needBits / targetBitrateBps * 1000.0));
-                    try { await Task.Delay(waitMs, cancellationToken).ConfigureAwait(false); }
-                    catch (OperationCanceledException) { return; }
-                    continue;
+                    var gapNs = nextDueNs - now;
+                    // Task.Delay sólo para huecos ≥ 2 ms; dormimos 1 ms menos
+                    // y cerramos con busy-wait (en Windows Task.Delay redondea
+                    // hacia arriba ~15 ms y perderíamos el slot).
+                    if (gapNs >= 2_000_000UL)
+                    {
+                        var sleepMs = (int)(gapNs / 1_000_000UL) - 1;
+                        try { await Task.Delay(sleepMs, cancellationToken).ConfigureAwait(false); }
+                        catch (OperationCanceledException) { return; }
+                    }
+                    // Busy-wait con Thread.SpinWait puro: no escala a Sleep
+                    // (SpinWait.SpinOnce sí, y a 10 Mbps pega Sleep(1) que
+                    // bloquea el threadpool worker y starvea al receiver).
+                    while (MonotonicClock.NowNs() < nextDueNs)
+                    {
+                        if (cancellationToken.IsCancellationRequested) return;
+                        Thread.SpinWait(200);
+                    }
                 }
-                tokensBits -= packetBits;
+                else if (now > nextDueNs + 50_000_000UL)
+                {
+                    // Atrás > 50 ms: resetear anchor para no generar ráfagas
+                    // gigantes si el socket/kernel se bloqueó momentáneamente.
+                    nextDueNs = now;
+                }
+                nextDueNs += nsPerPacket;
             }
 
             UdpDataPlane.WriteHeader(buf, seq, MonotonicClock.NowNs(), streamId);

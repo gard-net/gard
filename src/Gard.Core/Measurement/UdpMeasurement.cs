@@ -56,9 +56,8 @@ public static class UdpMeasurement
 
         if (doSend)
         {
-            var per = parms.TargetBitrateBps > 0
-                ? parms.TargetBitrateBps / (ulong)Math.Max(1, parms.Streams)
-                : 0UL;
+            // target_bitrate_bps es per-stream (match ref. Swift landspeed).
+            var per = parms.TargetBitrateBps;
             for (var i = 0; i < parms.Streams; i++)
             {
                 senders![i] = new UdpSender();
@@ -205,9 +204,8 @@ public static class UdpMeasurement
         }
         if (hostSends)
         {
-            var per = (parms.TargetBitrateBps ?? 0) > 0
-                ? (parms.TargetBitrateBps!.Value) / (ulong)Math.Max(1, parms.Streams)
-                : 0UL;
+            // target_bitrate_bps es per-stream (match ref. Swift landspeed).
+            var per = parms.TargetBitrateBps ?? 0UL;
             for (var i = 0; i < parms.Streams; i++)
             {
                 senders![i] = new UdpSender();
@@ -395,7 +393,13 @@ public static class UdpMeasurement
 
         var target = parms.TargetBitrateBps ?? 0;
         UdpStatsBody? up = null, down = null;
-        double missPct(ulong m) => target > 0 ? Math.Abs((double)m - (double)target) * 100.0 / target : 0;
+        // `target` es por stream (§12.3). Los m* son agregados → comparar vs agregado.
+        double missPct(ulong aggBps)
+        {
+            if (target == 0) return 0;
+            var aggTarget = (double)target * parms.Streams;
+            return Math.Abs((double)aggBps - aggTarget) * 100.0 / aggTarget;
+        }
 
         if (parms.Direction is TestDirection.Up or TestDirection.Bidir)
         {

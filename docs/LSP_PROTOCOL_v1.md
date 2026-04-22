@@ -386,7 +386,7 @@ Cada datagrama es un paquete autónomo (sin framing LSP — no tiene sentido sob
 ### 12.3 Control de ritmo (`target_bitrate_bps`)
 
 - `0` o campo ausente: el emisor envía lo más rápido posible (útil para "encontrar el techo"), equivalente a `iperf3 -u -b 0`.
-- Valor positivo: el emisor aplica un token bucket simple con ritmo constante. La tolerancia permitida es ±5 % sobre la ventana de medición. Si el emisor no logra mantener el ritmo, DEBE incluir `bitrate_miss_pct` en `result.udp` (§12.4).
+- Valor positivo: el emisor aplica ritmo constante **por stream** (no agregado). Tolerancia ±5 % sobre la ventana de medición. Si el emisor no logra mantener el ritmo, DEBE incluir `bitrate_miss_pct` en `result.udp` (§12.4). Para un objetivo agregado, el cliente multiplica por `streams` antes de poner el valor en `test_start`.
 
 ### 12.4 Métricas en `result`
 

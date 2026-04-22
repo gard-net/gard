@@ -8,8 +8,29 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-04-22
+
+Fix puntual sobre el emisor UDP del host (y por consistencia también del
+cliente) detectado contra `landspeed 1.5.5` en Windows + 1 GbE: con un
+`test_start` pidiendo 200 Mbps/stream × 4 streams, gard entregaba ~4 Mbps
+agregados en vez de ~800 Mbps.
+
+### Fixed
+- **UDP host sender pacing** — el token bucket viejo dormía vía
+  `Task.Delay(1)` (granularidad ~15.6 ms en Windows) y capeaba tokens a
+  10 ms worth, descartando tokens cada tick del scheduler. Reemplazado
+  por scheduling deadline-based (`nextDueNs = start + seq × nsPerPacket`)
+  con `Task.Delay` sólo para huecos ≥ 2 ms y busy-wait contra
+  `MonotonicClock` para la precisión sub-ms. Se limita la deuda a 50 ms
+  para evitar ráfagas tras pausas del socket.
+- **`target_bitrate_bps` ahora es per-stream** (no agregado) — coincide
+  con la referencia Swift (`LandspeedCore.UdpSender`). Antes gard dividía
+  por `streams`, lo que hacía que un cliente pidiendo 200 Mbps/stream
+  obtuviera 200 Mbps/`streams` por stream (ej. 50 Mbps con 4 streams).
+  Ver §12.3 del spec, clarificado en el mismo commit.
+
 ### Added
-- `CHANGELOG.md`.
+- `CHANGELOG.md` (entrada retroactiva para 0.2.0 ya existente).
 
 ## [0.2.0] — 2026-04-21
 
