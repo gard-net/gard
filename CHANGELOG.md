@@ -8,6 +8,34 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-04-24
+
+Fix de throughput del emisor UDP detectado tras 0.2.1 contra `landspeed
+1.5.6`: el host gard capeaba a ~12 Mbps en loopback Windows con
+`--bitrate 200M`, mientras `iperf3` mantenía ~800 Mbps en la misma red.
+Diagnóstico: el scheduler de Windows tiene granularidad por defecto
+~15.6 ms, y cada `await socket.SendAsync(...)` costaba ~135 µs por el
+round-trip IOCP/ThreadPool — el loop quedaba techado muy por debajo del
+target aunque el pacing deadline-based fuera correcto.
+
+### Fixed
+- **Windows timer resolution** — nuevo `WindowsTimerResolution.RaiseToOneMs()`
+  que llama `timeBeginPeriod(1)` vía P/Invoke a `winmm.dll` al iniciar
+  `gard host`, y `timeEndPeriod(1)` al shutdown. En macOS/Linux es no-op.
+  Baja la granularidad del scheduler del proceso a 1 ms, desbloqueando
+  pacing sub-ms.
+- **UDP send sincrónico en el hot loop** — reemplazado
+  `await socket.SendAsync(...)` por `socket.Client.Send(...)` /
+  `SendTo(...)` dentro del loop del `UdpSender`. El `await Task.Yield()`
+  inicial sigue garantizando que no corremos sync en el thread del
+  caller. El send UDP real al kernel es microsegundos; hacerlo sync
+  evita el round-trip async por paquete.
+
+### Verified
+- Loopback macOS arm64: 940 Mb/s @ `--bitrate 1000M`, 470 Mb/s @ 500M,
+  188 Mb/s @ 200M, 0 % loss, miss ≈ 6 % (warmup).
+- 115/115 tests Gard.Core.Tests pasan.
+
 ## [0.2.1] — 2026-04-22
 
 Fix puntual sobre el emisor UDP del host (y por consistencia también del

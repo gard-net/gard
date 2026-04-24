@@ -338,10 +338,16 @@ public sealed class UdpSender
             UdpDataPlane.WriteHeader(buf, seq, MonotonicClock.NowNs(), streamId);
             try
             {
+                // Send SINCRÓNICO: cada `await socket.SendAsync(...)` costaba
+                // ~135 µs en loopback por el round-trip IOCP/ThreadPool — eso
+                // techaba el sender a ~7 kpkt/s (~54 Mbps). El send UDP real
+                // al kernel es microsegundos; hacerlo sync dentro del loop
+                // async (tras el Task.Yield inicial) mantiene el throughput
+                // sub-µs sin ceder el thread por paquete.
                 if (target is null)
-                    await socket.SendAsync(buf, cancellationToken).ConfigureAwait(false);
+                    socket.Client.Send(buf, SocketFlags.None);
                 else
-                    await socket.SendAsync(buf, target, cancellationToken).ConfigureAwait(false);
+                    socket.Client.SendTo(buf, SocketFlags.None, target);
             }
             catch (OperationCanceledException) { return; }
             catch (SocketException) { /* peer cerró; seguimos por si se recupera */ continue; }

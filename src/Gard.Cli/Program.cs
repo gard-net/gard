@@ -11,8 +11,9 @@ using Gard.Core.Measurement;
 using Gard.Core.Models;
 using Gard.Core.Protocol;
 using Gard.Core.Transport;
+using Gard.Core.Utils;
 
-static string Version() => $"gard 0.2.1 (LSP/{ProtocolVersion.Current})";
+static string Version() => $"gard 0.2.2 (LSP/{ProtocolVersion.Current})";
 
 if (args.Length == 0) { PrintUsage(Console.Out); return 1; }
 
@@ -110,6 +111,11 @@ static async Task<int> RunHostAsync(string[] a)
     var dynamicPort = HasFlag(a, "--dynamic-port");
     var port = dynamicPort ? 0 : GetIntOpt(a, "--port", DiscoveryConstants.DefaultPort);
 
+    // En Windows el scheduler está en ~15.6 ms por default; baja a 1 ms
+    // para que las continuations del sender UDP no se alineen a ticks
+    // gruesas. No-op en macOS/Linux.
+    using var timerRes = WindowsTimerResolution.RaiseToOneMs();
+
     var listener = new TcpListener(IPAddress.IPv6Any, port);
     listener.Server.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, 0);
     listener.Start();
@@ -119,7 +125,7 @@ static async Task<int> RunHostAsync(string[] a)
     {
         Name = name,
         Platform = DeviceIdentity.CurrentPlatform,
-        AppVersion = "gard-0.2.1",
+        AppVersion = "gard-0.2.2",
     };
     await using var advertiser = new MdnsPeerAdvertiser(identity, port: actualPort);
     await advertiser.StartAsync();
@@ -282,7 +288,7 @@ static async Task<int> RunTestAsync(string[] a)
     {
         Name = "gard-cli",
         Platform = DeviceIdentity.CurrentPlatform,
-        AppVersion = "gard-0.2.1",
+        AppVersion = "gard-0.2.2",
     };
     var hs = await ClientHandshake.PerformAsync(ctl, identity);
     Console.Error.WriteLine($"  handshake OK session={Short(hs.SessionId)} caps={hs.NegotiatedCaps.ToHexString()}");
