@@ -280,6 +280,11 @@ static async Task<int> RunTestAsync(string[] a)
     if (warmup < 0) return Fail("--warmup debe ser >= 0");
     if (payload < 512) return Fail("--payload debe ser >= 512");
 
+    // En Windows el scheduler está en ~15.6 ms por default; baja a 1 ms
+    // para que el UdpSender del cliente (direction up/bidir) no quede
+    // techado por ticks gruesas. No-op en macOS/Linux.
+    using var timerRes = WindowsTimerResolution.RaiseToOneMs();
+
     Console.Error.WriteLine($"→ conectando a {host}:{port}...");
     await using var ctl = await TcpFrameTransport.ConnectAsync(host, port);
     Console.Error.WriteLine("  conexión de control lista");
