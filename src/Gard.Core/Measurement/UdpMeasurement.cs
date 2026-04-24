@@ -62,8 +62,9 @@ public static class UdpMeasurement
             {
                 senders![i] = new UdpSender();
                 var s = senders[i]; var sock = clientSockets.Sockets[i]; var idx = (ushort)i;
-                sendTasks![i] = Task.Run(() => s.RunAsync(
-                    sock, idx, parms.PayloadSize, per, sendCts.Token));
+                sendTasks![i] = RunOnDedicatedThread(
+                    () => s.RunAsync(sock, idx, parms.PayloadSize, per, sendCts.Token),
+                    sendCts.Token);
             }
         }
         if (doRecv)
@@ -72,7 +73,9 @@ public static class UdpMeasurement
             {
                 recvStats![i] = new UdpReceiverStats();
                 var st = recvStats[i]; var sock = clientSockets.Sockets[i];
-                recvTasks![i] = Task.Run(() => UdpReceiver.RunAsync(sock, st, recvCts.Token));
+                recvTasks![i] = RunOnDedicatedThread(
+                    () => UdpReceiver.RunAsync(sock, st, recvCts.Token),
+                    recvCts.Token);
             }
         }
 
@@ -199,7 +202,9 @@ public static class UdpMeasurement
             {
                 stats[i] ??= new UdpReceiverStats();
                 var s = stats[i]; var sock = hostSockets.Sockets[i];
-                recvTasks![i] = Task.Run(() => UdpReceiver.RunAsync(sock, s, recvCts.Token));
+                recvTasks![i] = RunOnDedicatedThread(
+                    () => UdpReceiver.RunAsync(sock, s, recvCts.Token),
+                    recvCts.Token);
             }
         }
         if (hostSends)
@@ -211,8 +216,9 @@ public static class UdpMeasurement
                 senders![i] = new UdpSender();
                 var s = senders[i]; var sock = hostSockets.Sockets[i];
                 var ep = endpoints[i]; var idx = (ushort)i;
-                sendTasks![i] = Task.Run(() => s.RunAsync(
-                    sock, ep, idx, parms.PayloadSize, per, sendCts.Token));
+                sendTasks![i] = RunOnDedicatedThread(
+                    () => s.RunAsync(sock, ep, idx, parms.PayloadSize, per, sendCts.Token),
+                    sendCts.Token);
             }
         }
 
@@ -452,4 +458,39 @@ public static class UdpMeasurement
 
     private static ulong NextRandomId() =>
         (ulong)Random.Shared.NextInt64(1, long.MaxValue);
+
+    /// <summary>
+    /// Arranca el loop sender/receiver en un <c>Thread</c> dedicado (fuera del
+    /// ThreadPool). Con <c>streams &gt; 1</c>, varios <c>Task.Run</c> en el
+    /// ThreadPool se preemptaban mutuamente durante el busy-wait del pacer —
+    /// el throughput por stream caía a ~80 µs/pkt (12.5 kpps) cuando en solo
+    /// podía bajar a ~10 µs/pkt. Con un hilo dedicado por stream, cada uno
+    /// queda en su propio core y el sender puede mantener el target.
+    /// </summary>
+    private static Task RunOnDedicatedThread(Func<Task> work, CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                work().GetAwaiter().GetResult();
+                tcs.TrySetResult();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                tcs.TrySetCanceled(ct);
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "gard-udp",
+        };
+        thread.Start();
+        return tcs.Task;
+    }
 }

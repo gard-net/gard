@@ -13,7 +13,7 @@ using Gard.Core.Protocol;
 using Gard.Core.Transport;
 using Gard.Core.Utils;
 
-static string Version() => $"gard 0.2.2 (LSP/{ProtocolVersion.Current})";
+static string Version() => $"gard 0.2.3 (LSP/{ProtocolVersion.Current})";
 
 if (args.Length == 0) { PrintUsage(Console.Out); return 1; }
 
@@ -125,7 +125,7 @@ static async Task<int> RunHostAsync(string[] a)
     {
         Name = name,
         Platform = DeviceIdentity.CurrentPlatform,
-        AppVersion = "gard-0.2.2",
+        AppVersion = "gard-0.2.3",
     };
     await using var advertiser = new MdnsPeerAdvertiser(identity, port: actualPort);
     await advertiser.StartAsync();
@@ -293,7 +293,7 @@ static async Task<int> RunTestAsync(string[] a)
     {
         Name = "gard-cli",
         Platform = DeviceIdentity.CurrentPlatform,
-        AppVersion = "gard-0.2.2",
+        AppVersion = "gard-0.2.3",
     };
     var hs = await ClientHandshake.PerformAsync(ctl, identity);
     Console.Error.WriteLine($"  handshake OK session={Short(hs.SessionId)} caps={hs.NegotiatedCaps.ToHexString()}");

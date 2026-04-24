@@ -8,6 +8,34 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-04-24
+
+Fix del escalado multi-stream UDP descubierto en batería amplia contra
+`landspeed 1.5.6` + Windows (issue #1). Con `--streams 4 --bitrate 1000M`
+gard capeaba a 452 Mb/s agregado cuando con `--streams 1` alcanzaba
+935 Mb/s: cada sender competía por workers del ThreadPool durante el
+busy-wait del pacer y se preemptaban mutuamente.
+
+### Fixed
+- **Sender/receiver por stream en hilo dedicado** — reemplazado
+  `Task.Run(() => ...)` por `RunOnDedicatedThread(...)` que crea un
+  `Thread` explícito por cada `UdpSender` / `UdpReceiver`, fuera del
+  ThreadPool. Con varios streams cada loop queda en su propio core
+  y no se preempta durante el busy-wait contra `MonotonicClock`.
+
+### Verified
+- Loopback macOS arm64, target 1000 Mb/s:
+  - `streams=1`: 969 Mb/s (era 969 — sin regresión)
+  - `streams=2`: 1 938 Mb/s (era ~1 200 — ahora escala 2×)
+  - `streams=4`: 3 122 Mb/s (era 452 — ahora escala ~3.2×)
+- 115/115 tests Gard.Core.Tests pasan.
+
+### Known (pendiente)
+- Bug A de issue #1 (`target_bitrate_bps` flaky tras TCP→UDP primera vez
+  en batería larga) no se logró reproducir. Con hilo dedicado desaparece
+  una causa potencial (contención ThreadPool entre la sesión de control
+  TCP previa y el UdpSender), pero no está formalmente probado.
+
 ## [0.2.2] — 2026-04-24
 
 Fix de throughput del emisor UDP detectado tras 0.2.1 contra `landspeed
