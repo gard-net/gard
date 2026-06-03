@@ -48,6 +48,7 @@ public class ControlMessageTests
             ProtocolVersion = ProtocolVersion.Current,
             SessionId = "00000000-0000-0000-0000-000000000001",
             ServerTimeNs = 1_700_000_000_000_000_000UL,
+            Platform = PeerPlatform.Linux,
             Caps = Capabilities.ParallelStreams | Capabilities.Pairing,
             RequiresPairing = true,
         };

@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag a buildear (ej. v0.2.5). Vacío = usa el ref actual.'
+        description: 'Tag a buildear (ej. v0.2.6). Vacío = usa el ref actual.'
         required: false
 
 concurrency:
@@ -111,6 +111,26 @@ jobs:
           cp -r docs "dist/$DEST/docs"
           echo "$BUILD_KIND" > "dist/$DEST/BUILD_KIND"
           echo "DEST=$DEST" >> "$GITHUB_ENV"
+
+      - name: Smoke artifact (Unix)
+        if: matrix.rid != 'win-x64'
+        shell: bash
+        run: |
+          "dist/$DEST/gard" --version
+          "dist/$DEST/gard" --help >/dev/null
+          "dist/$DEST/gard" doctor --plain >/dev/null
+          "dist/$DEST/gard" test --csv-header >/dev/null
+          echo "artifact smoke ok ($BUILD_KIND)"
+
+      - name: Smoke artifact (Windows)
+        if: matrix.rid == 'win-x64'
+        shell: pwsh
+        run: |
+          & "dist/$env:DEST/gard.exe" --version
+          & "dist/$env:DEST/gard.exe" --help | Out-Null
+          & "dist/$env:DEST/gard.exe" doctor --plain | Out-Null
+          & "dist/$env:DEST/gard.exe" test --csv-header | Out-Null
+          Write-Host "artifact smoke ok ($env:BUILD_KIND)"
 
       - name: Empaquetar (tar.gz)
         if: matrix.archive == 'tar'

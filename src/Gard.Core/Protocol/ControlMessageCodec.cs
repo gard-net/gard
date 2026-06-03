@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Gard.Core.Protocol;
 
@@ -17,20 +18,7 @@ public static class ControlMessageCodec
 
     private static JsonSerializerOptions BuildDefaultOptions()
     {
-        var opts = new JsonSerializerOptions
-        {
-            // Swift tiene CodingKeys explícitos por struct que mapean cada property
-            // a snake_case (`protocolVersion` → `protocol_version`, `appVersion` →
-            // `app_version`, `deviceName` → `device_name`, etc.). El wire oficial
-            // LSP/1 es snake_case; este codec lo matchea globalmente. Interop con
-            // la app Swift Apple validada.
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            // Igual que `.withoutEscapingSlashes` en Swift:
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-            WriteIndented = false,
-        };
-        return opts;
+        return LspJsonContext.CreateOptions();
     }
 
     /// <summary>
@@ -42,29 +30,26 @@ public static class ControlMessageCodec
         var opts = options ?? DefaultOptions;
 
         // 1) Serializa el body al JSON del dominio (snake_case).
-        object body = message switch
+        JsonObject bodyJson = message switch
         {
-            HelloMessage h         => h.Body,
-            HelloAckMessage h      => h.Body,
-            PairRequestMessage m   => m.Body,
-            PairAckMessage m       => m.Body,
-            ClockSyncMessage m     => m.Body,
-            ClockSyncAckMessage m  => m.Body,
-            PingMessage m          => m.Body,
-            PongMessage m          => m.Body,
-            TestStartMessage m     => m.Body,
-            TestStartAckMessage m  => m.Body,
-            TestTickMessage m      => m.Body,
-            TestEndMessage m       => m.Body,
-            ResultMessage m        => m.Body,
-            GoodbyeMessage m       => m.Body,
-            ErrorMessage m         => m.Body,
-            UdpStatsReportMessage m => m.Body,
+            HelloMessage h         => ToObject(h.Body, LspJsonContext.Default.HelloBody),
+            HelloAckMessage h      => ToObject(h.Body, LspJsonContext.Default.HelloAckBody),
+            PairRequestMessage m   => ToObject(m.Body, LspJsonContext.Default.PairRequestBody),
+            PairAckMessage m       => ToObject(m.Body, LspJsonContext.Default.PairAckBody),
+            ClockSyncMessage m     => ToObject(m.Body, LspJsonContext.Default.ClockSyncBody),
+            ClockSyncAckMessage m  => ToObject(m.Body, LspJsonContext.Default.ClockSyncAckBody),
+            PingMessage m          => ToObject(m.Body, LspJsonContext.Default.PingBody),
+            PongMessage m          => ToObject(m.Body, LspJsonContext.Default.PongBody),
+            TestStartMessage m     => ToObject(m.Body, LspJsonContext.Default.TestStartBody),
+            TestStartAckMessage m  => ToObject(m.Body, LspJsonContext.Default.TestStartAckBody),
+            TestTickMessage m      => ToObject(m.Body, LspJsonContext.Default.TestTickBody),
+            TestEndMessage m       => ToObject(m.Body, LspJsonContext.Default.TestEndBody),
+            ResultMessage m        => ToObject(m.Body, LspJsonContext.Default.ResultBody),
+            GoodbyeMessage m       => ToObject(m.Body, LspJsonContext.Default.GoodbyeBody),
+            ErrorMessage m         => ToObject(m.Body, LspJsonContext.Default.ErrorBody),
+            UdpStatsReportMessage m => ToObject(m.Body, LspJsonContext.Default.UdpStatsReportBody),
             _ => throw LandspeedException.InternalInconsistency($"tipo de ControlMessage desconocido: {message.GetType()}"),
         };
-
-        var bodyJson = JsonSerializer.SerializeToNode(body, body.GetType(), opts) as JsonObject
-            ?? throw LandspeedException.InternalInconsistency("cuerpo JSON no es objeto");
 
         // 2) Inyecta t + id al mismo nivel.
         bodyJson["t"] = message.T;
@@ -107,11 +92,11 @@ public static class ControlMessageCodec
             throw LandspeedException.MalformedControlJson($"t/id con tipo inválido: {ex.Message}", ex);
         }
 
-        ControlMessage Make<T>(Func<ulong, T, ControlMessage> ctor) where T : notnull
+        ControlMessage Make<T>(JsonTypeInfo<T> typeInfo, Func<ulong, T, ControlMessage> ctor) where T : notnull
         {
             try
             {
-                var body = root.Deserialize<T>(opts)
+                var body = root.Deserialize(typeInfo)
                     ?? throw LandspeedException.MalformedControlJson($"body nulo para {t}");
                 return ctor(id, body);
             }
@@ -123,22 +108,22 @@ public static class ControlMessageCodec
 
         return t switch
         {
-            "hello"          => Make<HelloBody>((i, b) => new HelloMessage(i, b)),
-            "hello_ack"      => Make<HelloAckBody>((i, b) => new HelloAckMessage(i, b)),
-            "pair_request"   => Make<PairRequestBody>((i, b) => new PairRequestMessage(i, b)),
-            "pair_ack"       => Make<PairAckBody>((i, b) => new PairAckMessage(i, b)),
-            "clock_sync"     => Make<ClockSyncBody>((i, b) => new ClockSyncMessage(i, b)),
-            "clock_sync_ack" => Make<ClockSyncAckBody>((i, b) => new ClockSyncAckMessage(i, b)),
-            "ping"           => Make<PingBody>((i, b) => new PingMessage(i, b)),
-            "pong"           => Make<PongBody>((i, b) => new PongMessage(i, b)),
-            "test_start"     => Make<TestStartBody>((i, b) => new TestStartMessage(i, b)),
-            "test_start_ack" => Make<TestStartAckBody>((i, b) => new TestStartAckMessage(i, b)),
-            "test_tick"      => Make<TestTickBody>((i, b) => new TestTickMessage(i, b)),
+            "hello"          => Make(LspJsonContext.Default.HelloBody, (i, b) => new HelloMessage(i, b)),
+            "hello_ack"      => Make(LspJsonContext.Default.HelloAckBody, (i, b) => new HelloAckMessage(i, b)),
+            "pair_request"   => Make(LspJsonContext.Default.PairRequestBody, (i, b) => new PairRequestMessage(i, b)),
+            "pair_ack"       => Make(LspJsonContext.Default.PairAckBody, (i, b) => new PairAckMessage(i, b)),
+            "clock_sync"     => Make(LspJsonContext.Default.ClockSyncBody, (i, b) => new ClockSyncMessage(i, b)),
+            "clock_sync_ack" => Make(LspJsonContext.Default.ClockSyncAckBody, (i, b) => new ClockSyncAckMessage(i, b)),
+            "ping"           => Make(LspJsonContext.Default.PingBody, (i, b) => new PingMessage(i, b)),
+            "pong"           => Make(LspJsonContext.Default.PongBody, (i, b) => new PongMessage(i, b)),
+            "test_start"     => Make(LspJsonContext.Default.TestStartBody, (i, b) => new TestStartMessage(i, b)),
+            "test_start_ack" => Make(LspJsonContext.Default.TestStartAckBody, (i, b) => new TestStartAckMessage(i, b)),
+            "test_tick"      => Make(LspJsonContext.Default.TestTickBody, (i, b) => new TestTickMessage(i, b)),
             "test_end"       => new TestEndMessage(id, new TestEndBody()),
-            "result"         => Make<ResultBody>((i, b) => new ResultMessage(i, b)),
-            "goodbye"        => Make<GoodbyeBody>((i, b) => new GoodbyeMessage(i, b)),
-            "error"          => Make<ErrorBody>((i, b) => new ErrorMessage(i, b)),
-            "udp_stats"      => Make<UdpStatsReportBody>((i, b) => new UdpStatsReportMessage(i, b)),
+            "result"         => Make(LspJsonContext.Default.ResultBody, (i, b) => new ResultMessage(i, b)),
+            "goodbye"        => Make(LspJsonContext.Default.GoodbyeBody, (i, b) => new GoodbyeMessage(i, b)),
+            "error"          => Make(LspJsonContext.Default.ErrorBody, (i, b) => new ErrorMessage(i, b)),
+            "udp_stats"      => Make(LspJsonContext.Default.UdpStatsReportBody, (i, b) => new UdpStatsReportMessage(i, b)),
             _ => throw LandspeedException.UnknownControlMessageType(t),
         };
     }
@@ -163,6 +148,10 @@ public static class ControlMessageCodec
         }
         return stream.ToArray();
     }
+
+    private static JsonObject ToObject<T>(T body, JsonTypeInfo<T> typeInfo)
+        => JsonSerializer.SerializeToNode(body, typeInfo) as JsonObject
+            ?? throw LandspeedException.InternalInconsistency("cuerpo JSON no es objeto");
 
     private static void WriteSorted(Utf8JsonWriter writer, JsonNode? node)
     {

@@ -23,6 +23,7 @@ public sealed record HelloAckBody
     public required ProtocolVersion ProtocolVersion { get; init; }
     public required string SessionId { get; init; }
     public required ulong ServerTimeNs { get; init; }
+    public PeerPlatform? Platform { get; init; }
     public required Capabilities Caps { get; init; }
     public required bool RequiresPairing { get; init; }
 }

@@ -19,7 +19,7 @@ gard host
 gard test --host 192.168.1.50 --direction down --duration 10 --streams 4
 ```
 
-> Status: `v0.2.5`, LSP/1.2. This release focuses on native distribution,
+> Status: `v0.2.6`, LSP/1.2. This release focuses on native distribution,
 > interactive pixel-art CLI polish and operational diagnostics. LSP wire
 > compatibility is unchanged.
 
@@ -261,7 +261,7 @@ Latency
 Interactive terminals use the richer layout by default:
 
 ```text
-gard v0.2.5
+gard v0.2.6
   #####    ###    ####   ####
  ##       ## ##   ##  ## ##  ##
  ##  ###  #####   ####   ##  ##

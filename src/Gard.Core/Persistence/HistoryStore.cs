@@ -43,6 +43,7 @@ public sealed class HistoryStore
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             WriteIndented = true,
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            TypeInfoResolver = PersistenceJsonContext.Default,
         };
         return opts;
     }
@@ -129,7 +130,7 @@ public sealed class HistoryStore
         if (!File.Exists(_filePath)) return Array.Empty<TestResult>();
         await using var fs = File.OpenRead(_filePath);
         if (fs.Length == 0) return Array.Empty<TestResult>();
-        var snap = await JsonSerializer.DeserializeAsync<Snapshot>(fs, JsonOptions, cancellationToken)
+        var snap = await JsonSerializer.DeserializeAsync(fs, PersistenceJsonContext.Default.HistorySnapshot, cancellationToken)
             .ConfigureAwait(false);
         return snap?.Results ?? Array.Empty<TestResult>();
     }
@@ -140,7 +141,7 @@ public sealed class HistoryStore
         var tmp = Path.Combine(_directory, ".history.json.tmp");
         await using (var fs = File.Create(tmp))
         {
-            await JsonSerializer.SerializeAsync(fs, snap, JsonOptions, cancellationToken)
+            await JsonSerializer.SerializeAsync(fs, snap, PersistenceJsonContext.Default.HistorySnapshot, cancellationToken)
                 .ConfigureAwait(false);
             await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
         }

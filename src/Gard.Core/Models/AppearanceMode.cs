@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Gard.Core.Models;
 
 /// <summary>
@@ -7,9 +9,9 @@ namespace Gard.Core.Models;
 public enum AppearanceMode
 {
     /// <summary>Seguir la preferencia del sistema.</summary>
-    System,
+    [JsonStringEnumMemberName("system")] System,
     /// <summary>Forzar tema claro.</summary>
-    Light,
+    [JsonStringEnumMemberName("light")] Light,
     /// <summary>Forzar tema oscuro.</summary>
-    Dark,
+    [JsonStringEnumMemberName("dark")] Dark,
 }

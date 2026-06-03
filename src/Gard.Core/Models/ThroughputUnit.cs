@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Gard.Core.Models;
 
 /// <summary>
@@ -7,9 +9,9 @@ namespace Gard.Core.Models;
 public enum ThroughputUnit
 {
     /// <summary>Megabits por segundo (10^6 bits/s).</summary>
-    Mbps,
+    [JsonStringEnumMemberName("mbps")] Mbps,
     /// <summary>Mebibits por segundo (2^20 bits/s).</summary>
-    Mibps,
+    [JsonStringEnumMemberName("mibps")] Mibps,
     /// <summary>Megabytes por segundo (10^6 bytes/s).</summary>
-    MBps,
+    [JsonStringEnumMemberName("mbps_bytes")] MBps,
 }

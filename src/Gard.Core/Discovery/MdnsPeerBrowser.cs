@@ -211,7 +211,7 @@ public sealed class MdnsPeerBrowser : IAsyncDisposable
         }
 
         var addresses = buf.Addresses.Values.ToArray();
-        var host = addresses.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?.ToString()
+        var host = PeerAddressSelector.PreferUsefulAddress(addresses)?.ToString()
                 ?? addresses.FirstOrDefault()?.ToString()
                 ?? target;
 

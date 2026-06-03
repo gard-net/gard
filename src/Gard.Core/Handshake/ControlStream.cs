@@ -39,8 +39,8 @@ public sealed class ControlStream : IAsyncDisposable
                     ErrorBody body;
                     try
                     {
-                        body = System.Text.Json.JsonSerializer.Deserialize<ErrorBody>(
-                            frame.Payload.Span, ControlMessageCodec.DefaultOptions)
+                        body = System.Text.Json.JsonSerializer.Deserialize(
+                            frame.Payload.Span, LspJsonContext.Default.ErrorBody)
                             ?? new ErrorBody { Code = -1, Message = "error" };
                     }
                     catch

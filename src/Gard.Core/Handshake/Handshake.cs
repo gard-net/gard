@@ -96,6 +96,7 @@ public static class ClientHandshake
             SessionId = ack.SessionId,
             NegotiatedCaps = negotiated,
             PeerVersion = ack.ProtocolVersion,
+            PeerPlatform = ack.Platform ?? PeerPlatform.Linux,
             ClockOffsetNs = offsetNs,
             ClockSyncRttNs = rttNs,
         };
@@ -144,6 +145,7 @@ public static class HostHandshake
             ProtocolVersion = ProtocolVersion.Current,
             SessionId = sessionId,
             ServerTimeNs = MonotonicClock.NowNs(),
+            Platform = identity.Platform,
             Caps = identity.Caps,
             RequiresPairing = requires,
         }), cancellationToken).ConfigureAwait(false);
@@ -180,6 +182,7 @@ public static class HostHandshake
             SessionId = sessionId,
             NegotiatedCaps = negotiated,
             PeerVersion = hello.ProtocolVersion,
+            PeerPlatform = hello.Platform,
             ClockOffsetNs = 0,
             ClockSyncRttNs = 0,
         };

@@ -40,6 +40,26 @@ public class CliHumanFormatterTests
     }
 
     [Theory]
+    [InlineData("NO_COLOR", "1")]
+    [InlineData("TERM", "dumb")]
+    [InlineData("CI", "true")]
+    public void Terminal_HonorsEnvironmentForDefaultDetection(string name, string value)
+    {
+        var old = Environment.GetEnvironmentVariable(name);
+        try
+        {
+            Environment.SetEnvironmentVariable(name, value);
+            var term = new CliTerminal(CliStyleOptions.Default);
+            if (name == "NO_COLOR") Assert.False(term.Color);
+            else Assert.False(term.Rich);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, old);
+        }
+    }
+
+    [Theory]
     [InlineData(999UL, "999 b/s")]
     [InlineData(1_500UL, "1.50 Kb/s")]
     [InlineData(2_500_000UL, "2.50 Mb/s")]

@@ -137,6 +137,7 @@ static async Task<int> RunHostAsync(string[] a, CliTerminal term)
 
     using var shutdownCts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, ev) => { ev.Cancel = true; shutdownCts.Cancel(); };
+    AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdownCts.Cancel();
 
     while (!shutdownCts.IsCancellationRequested)
     {
@@ -234,7 +235,9 @@ static async Task<int> RunWatchAsync(string[] a, CliTerminal term)
     {
         try
         {
-            var result = await RunMeasurementAsync(options.Test, term, showProgress: false, shutdownCts.Token);
+            using var sampleCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownCts.Token);
+            sampleCts.CancelAfter(TimeSpan.FromSeconds(options.Test.Parameters.DurationS + options.Test.Parameters.WarmupS + 15));
+            var result = await RunMeasurementAsync(options.Test, term, showProgress: false, sampleCts.Token);
             rows.Add(WatchRow(term, result));
             if (rows.Count > 12) rows.RemoveAt(0);
             Console.Out.WriteLine(term.Rich ? CliTable.Render(term, columns, rows) : string.Join("  ", rows[^1]));
@@ -305,7 +308,7 @@ static async Task<TestResult> RunMeasurementAsync(
     {
         Parameters = parameters,
         PeerName = options.Host,
-        PeerPlatform = DeviceIdentity.CurrentPlatform,
+        PeerPlatform = hs.PeerPlatform,
         SessionId = hs.SessionId,
         NegotiatedCaps = hs.NegotiatedCaps,
     };

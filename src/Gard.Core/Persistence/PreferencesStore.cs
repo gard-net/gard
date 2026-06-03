@@ -34,7 +34,7 @@ public sealed class PreferencesStore
             WriteIndented = true,
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         };
-        opts.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower));
+        opts.TypeInfoResolver = PersistenceJsonContext.Default;
         return opts;
     }
 
@@ -71,7 +71,7 @@ public sealed class PreferencesStore
             Snapshot? snap;
             try
             {
-                snap = await JsonSerializer.DeserializeAsync<Snapshot>(fs, JsonOptions, cancellationToken)
+                snap = await JsonSerializer.DeserializeAsync(fs, PersistenceJsonContext.Default.PreferencesSnapshot, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (JsonException)
@@ -139,7 +139,7 @@ public sealed class PreferencesStore
         if (fs.Length == 0) return new Preferences();
         try
         {
-            var snap = await JsonSerializer.DeserializeAsync<Snapshot>(fs, JsonOptions, cancellationToken)
+            var snap = await JsonSerializer.DeserializeAsync(fs, PersistenceJsonContext.Default.PreferencesSnapshot, cancellationToken)
                 .ConfigureAwait(false);
             return (snap?.Preferences ?? new Preferences()).Sanitized();
         }
@@ -155,7 +155,7 @@ public sealed class PreferencesStore
         var tmp = Path.Combine(_directory, ".preferences.json.tmp");
         await using (var fs = File.Create(tmp))
         {
-            await JsonSerializer.SerializeAsync(fs, snap, JsonOptions, cancellationToken)
+            await JsonSerializer.SerializeAsync(fs, snap, PersistenceJsonContext.Default.PreferencesSnapshot, cancellationToken)
                 .ConfigureAwait(false);
             await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
         }

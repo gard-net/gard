@@ -8,6 +8,29 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-06-03
+
+Hardening de confiabilidad tras las primeras pruebas Mac ↔ HP con `v0.2.5`.
+No cambia LSP/1.2 ni introduce cambios wire obligatorios.
+
+### Fixed
+- `scan` ahora prefiere direcciones IPv4 útiles en la misma LAN antes que
+  interfaces bridge/Docker como `172.19.0.1`.
+- `gard test` muestra la plataforma anunciada por el peer remoto cuando está
+  disponible, en vez de repetir la plataforma local.
+- `watch` aplica timeout por muestra y maneja salida de proceso para reducir
+  riesgo de quedar colgado en ejecuciones no interactivas.
+
+### Changed
+- El codec LSP usa metadata `System.Text.Json` source-generated para los cuerpos
+  de control, reduciendo warnings propios de Native AOT.
+- `hello_ack` incluye `platform` como campo opcional y aditivo para peers Gard
+  nuevos; peers antiguos siguen funcionando.
+
+### Tests
+- Cobertura nueva para selección de IP mDNS, entorno rich/plain de terminal y
+  round-trip de `hello_ack.platform`.
+
 ## [0.2.5] — 2026-06-03
 
 Upgrade de interfaz pública y distribución. No cambia LSP/1.2 ni la forma wire.

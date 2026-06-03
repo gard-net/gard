@@ -8,7 +8,7 @@
     <AssemblyName>gard</AssemblyName>
     <RootNamespace>Gard.Cli</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Version>0.2.5</Version>
+    <Version>0.2.6</Version>
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
