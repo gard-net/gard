@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Gard.Cli\Gard.Cli.csproj" />
     <ProjectReference Include="..\Gard.Core\Gard.Core.csproj" />
   </ItemGroup>
 

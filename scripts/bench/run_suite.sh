@@ -203,11 +203,7 @@ parse_gard() {
     # 16=ping_min 17=ping_avg 18=ping_max 19=ping_p95
     # 20=jitter_ms 21=loss_pct 22=ping_samples
     # 23=rtt_load_median 24=rtt_load_p95 25=rtt_load_spikes
-    awk -F',' '{
-        if (NF < 10) { print "0,,,,,"; exit }
-        #   mean   jitter  loss    p_avg   p_p95   rtt_p95
-        print $10","$20","$21","$17","$19","$24
-    }'
+    python3 "$REPO_ROOT/scripts/bench/parse_gard_csv.py"
 }
 
 # ---------- iteration ----------

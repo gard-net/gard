@@ -22,5 +22,5 @@ commit the result as `Formula/gard.rb` in the
 ## Windows
 
 The `win-x64` zip produced by the release workflow is the distribution
-artifact — no installer in v0.1. `gard.exe` is self-contained and has
-no external runtime dependencies.
+artifact. `gard.exe` is self-contained and has no external runtime
+dependencies.

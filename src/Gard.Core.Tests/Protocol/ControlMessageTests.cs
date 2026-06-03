@@ -127,6 +127,33 @@ public class ControlMessageTests
     }
 
     [Fact]
+    public void UdpStatsRoundTrip()
+    {
+        var msg = new UdpStatsReportMessage(77, new UdpStatsReportBody
+        {
+            PerStream =
+            [
+                new UdpStatsPerStream
+                {
+                    Stream = 0,
+                    PacketsSent = 1000,
+                    BytesSent = 1_200_000,
+                    PacketsReceived = 990,
+                    BytesReceived = 1_188_000,
+                    ReorderCount = 3,
+                    DuplicateCount = 1,
+                    JitterNs = 250_000,
+                },
+            ],
+        });
+
+        AssertWireRoundTrip(msg);
+        var json = System.Text.Encoding.UTF8.GetString(ControlMessageCodec.Encode(msg));
+        Assert.Contains("\"t\":\"udp_stats\"", json);
+        Assert.Contains("\"per_stream\"", json);
+    }
+
+    [Fact]
     public void ErrorRoundTrip()
     {
         var msg = new ErrorMessage(5, new ErrorBody { Code = 1001, Message = "frame too large" });

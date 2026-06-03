@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag a buildear (ej. v0.2.0). Vacío = usa el ref actual.'
+        description: 'Tag a buildear (ej. v0.2.4). Vacío = usa el ref actual.'
         required: false
 
 concurrency:

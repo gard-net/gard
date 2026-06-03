@@ -8,6 +8,33 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-06-03
+
+Actualización general de calidad tras la reactivación del repo en la nueva raíz
+Patagua. No cambia LSP/1.2 ni introduce cambios wire.
+
+### Changed
+- README reescrito como entrada principal del repo: instalación, uso TCP/UDP,
+  CSV/JSON, desarrollo, benchmarks, release, relación con LandSpeed y límites
+  conocidos.
+- CLI versionado como `0.2.4` y `gard-0.2.4`.
+- Parsing y validación del CLI extraídos a helpers testeables, con rangos
+  explícitos para puertos, streams, duración, warmup, payload, gap y bitrate.
+- Formato CSV extraído a helper testeable y escapado correctamente para comas,
+  comillas y saltos de línea.
+- `scripts/bench/run_suite.sh` ahora parsea el CSV de Gard con `python3/csv` en
+  vez de `awk -F','`, compatible con labels escapados.
+- Packaging Debian/Homebrew actualizado para describir LSP/1.2.
+
+### Fixed
+- Argumentos numéricos inválidos ya no caen silenciosamente al default.
+- `gard test` ya no identifica siempre el peer local como `macos`; usa la
+  plataforma real detectada por `DeviceIdentity.CurrentPlatform`.
+
+### Tests
+- Cobertura nueva para parsing CLI válido/inválido, CSV escapado y round-trip
+  wire de `udp_stats` LSP/1.2.
+
 ## [0.2.3] — 2026-04-24
 
 Fix del escalado multi-stream UDP descubierto en batería amplia contra
