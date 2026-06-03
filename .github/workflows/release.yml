@@ -1,6 +1,7 @@
 name: Release
 
-# De tag 'vX.Y.Z' a binarios self-contained + .deb + draft release.
+# De tag 'vX.Y.Z' a binarios nativos/AOT cuando sea posible, con fallback
+# self-contained + .deb + draft release.
 # Si salís corriendo con 'git push --tags' sin querer, esto se va a
 # ejecutar — avisado estás.
 
@@ -11,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag a buildear (ej. v0.2.4). Vacío = usa el ref actual.'
+        description: 'Tag a buildear (ej. v0.2.5). Vacío = usa el ref actual.'
         required: false
 
 concurrency:
@@ -70,16 +71,31 @@ jobs:
           echo "tag=$REF"     >> "$GITHUB_OUTPUT"
           echo "→ buildeando $REF (version=$VER)"
 
-      - name: Publish (self-contained, single-file)
+      - name: Publish (Native AOT, fallback self-contained)
         shell: bash
         run: |
+          set +e
           dotnet publish src/Gard.Cli/Gard.Cli.csproj \
             -c Release -r ${{ matrix.rid }} \
-            --self-contained true \
-            -p:PublishSingleFile=true \
-            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:PublishAot=true \
             -p:Version=${{ steps.ver.outputs.version }} \
             -o ./out/${{ matrix.rid }}
+          AOT_STATUS=$?
+          set -e
+          if [ "$AOT_STATUS" -eq 0 ]; then
+            echo "BUILD_KIND=native-aot" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Native AOT failed for ${{ matrix.rid }}; falling back to self-contained single-file."
+            rm -rf ./out/${{ matrix.rid }}
+            dotnet publish src/Gard.Cli/Gard.Cli.csproj \
+              -c Release -r ${{ matrix.rid }} \
+              --self-contained true \
+              -p:PublishSingleFile=true \
+              -p:IncludeNativeLibrariesForSelfExtract=true \
+              -p:Version=${{ steps.ver.outputs.version }} \
+              -o ./out/${{ matrix.rid }}
+            echo "BUILD_KIND=self-contained" >> "$GITHUB_ENV"
+          fi
 
       - name: Armar carpeta de release
         shell: bash
@@ -93,6 +109,7 @@ jobs:
           fi
           cp README.md LICENSE LICENSE-docs "dist/$DEST/"
           cp -r docs "dist/$DEST/docs"
+          echo "$BUILD_KIND" > "dist/$DEST/BUILD_KIND"
           echo "DEST=$DEST" >> "$GITHUB_ENV"
 
       - name: Empaquetar (tar.gz)

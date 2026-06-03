@@ -8,8 +8,8 @@ load. It is built for engineers who need more than a speed number and less than
 a lab full of custom tooling.
 
 Gard speaks the open **Landspeed Protocol (LSP/1.2)**, discovers peers over
-mDNS, supports TCP and UDP data planes, and emits clean human, JSON and CSV
-output.
+mDNS, supports TCP and UDP data planes, ships as SDK-free native/self-contained
+binaries, and emits clean human, JSON and CSV output.
 
 ```sh
 # Terminal A: listen on one machine
@@ -19,9 +19,9 @@ gard host
 gard test --host 192.168.1.50 --direction down --duration 10 --streams 4
 ```
 
-> Status: `v0.2.4`, LSP/1.2. This release focuses on public CLI polish,
-> validation, documentation and release readiness. LSP wire compatibility is
-> unchanged.
+> Status: `v0.2.5`, LSP/1.2. This release focuses on native distribution,
+> interactive pixel-art CLI polish and operational diagnostics. LSP wire
+> compatibility is unchanged.
 
 ## Why Gard
 
@@ -31,6 +31,7 @@ repeatable product-grade diagnostics:
 - Discover peers on your LAN with no central service.
 - Measure throughput, latency, jitter, packet loss and RTT under load together.
 - Use TCP for baseline tests or UDP for paced, loss-aware measurements.
+- Run a polished interactive terminal UI, or force plain output for logs.
 - Script results as JSON or CSV without scraping terminal output.
 - Interoperate through the documented LSP/1.2 protocol.
 
@@ -53,6 +54,9 @@ On another device:
 ```sh
 gard scan --seconds 5
 gard test --host 192.168.1.50 --direction down --duration 10 --streams 4
+gard watch 192.168.1.50 --interval 5
+gard info 192.168.1.50
+gard doctor
 ```
 
 For UDP:
@@ -75,7 +79,11 @@ gard test --csv-header
 
 ## Install
 
-Release assets are self-contained and do not require a system .NET runtime.
+Release assets do not require a system .NET runtime or .NET SDK. Gard attempts
+Native AOT release binaries first; if a platform cannot publish AOT cleanly, the
+release workflow falls back to a self-contained single-file executable.
+
+You need the .NET SDK only when building Gard from source.
 
 | Platform | Asset |
 | --- | --- |
@@ -84,7 +92,8 @@ Release assets are self-contained and do not require a system .NET runtime.
 | macOS Intel | `osx-x64.tar.gz` |
 | Windows x64 | `.zip` |
 
-Each release includes SHA256 checksums.
+Each release includes SHA256 checksums and a `BUILD_KIND` file in the archive
+that says `native-aot` or `self-contained`.
 
 ## Build From Source
 
@@ -101,7 +110,15 @@ dotnet build gard.slnx -c Release --no-restore
 dotnet run --project src/Gard.Cli -c Release -- --help
 ```
 
-Publish a self-contained binary:
+Publish a Native AOT binary:
+
+```sh
+dotnet publish src/Gard.Cli -c Release -r osx-arm64 \
+  -p:PublishAot=true \
+  -o ./out/osx-arm64-aot
+```
+
+Publish a self-contained fallback binary:
 
 ```sh
 dotnet publish src/Gard.Cli -c Release -r osx-arm64 \
@@ -111,6 +128,8 @@ dotnet publish src/Gard.Cli -c Release -r osx-arm64 \
 ```
 
 Common runtime IDs: `linux-x64`, `osx-arm64`, `osx-x64`, `win-x64`.
+See [docs/native-aot-notes.md](docs/native-aot-notes.md) for the current AOT
+audit and fallback policy.
 
 ## CLI
 
@@ -125,6 +144,9 @@ Commands:
 - `gard scan`: discover LSP peers on the LAN.
 - `gard host`: listen for incoming tests and advertise over mDNS.
 - `gard test`: measure a peer over TCP or UDP.
+- `gard watch`: run repeated short measurements until `Ctrl+C`.
+- `gard info`: show peer protocol and negotiated capabilities.
+- `gard doctor`: diagnose local interfaces, install path and firewall hints.
 
 Help is available globally and per command:
 
@@ -133,8 +155,15 @@ gard --help
 gard help scan
 gard help host
 gard help test
+gard help watch
+gard help info
+gard help doctor
 gard test --help
 ```
+
+Human output uses a rich ASCII/ANSI terminal style when stdout is interactive.
+Use `--plain`, `--no-color` or `--style plain` for logs, narrow terminals or
+automation. JSON and CSV never include banners, ANSI color or progress text.
 
 ### `gard scan`
 
@@ -176,6 +205,35 @@ Important options:
 UDP supports bidirectional simultaneous mode. Sequential bidirectional mode is
 TCP-only.
 
+### `gard watch`
+
+```sh
+gard watch 192.168.1.50 --interval 5
+gard watch --host 192.168.1.50 --direction down --duration 2
+```
+
+Runs repeated short tests and prints a live table with throughput, latency, loss
+and quality. Stop with `Ctrl+C`.
+
+### `gard info`
+
+```sh
+gard info 192.168.1.50
+```
+
+Performs a control handshake and prints LSP version, negotiated capabilities and
+available transports.
+
+### `gard doctor`
+
+```sh
+gard doctor
+gard doctor --plain
+```
+
+Prints local OS, architecture, install path, network interfaces, mDNS service
+name and firewall hints.
+
 ## Output
 
 Human output is designed for terminals:
@@ -198,6 +256,26 @@ Latency
   Ping:    min 0.42 ms, avg 0.71 ms, p95 1.12 ms, max 3.11 ms
   Jitter:  0.23 ms
   Loss:    0.00% (234 samples)
+```
+
+Interactive terminals use the richer layout by default:
+
+```text
+gard v0.2.5
+  #####    ###    ####   ####
+ ##       ## ##   ##  ## ##  ##
+ ##  ###  #####   ####   ##  ##
+
+> gard test 192.168.1.50 --duration 10s --streams 4
+
++------------------------------- RESULTS -------------------------------+
+| THROUGHPUT                                                           |
+| [####################........]  mean 720.09 Mb/s  peak 893.91 Mb/s   |
+| LATENCY                                                              |
+| Min    3.69 ms   Avg   43.33 ms   P95   73.35 ms   Max  103.90 ms   |
+| QUALITY                                                              |
+| Grade: degraded                                                      |
++-----------------------------------------------------------------------+
 ```
 
 JSON and CSV are stable machine-readable modes. Progress logs go to stderr;

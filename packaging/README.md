@@ -2,14 +2,15 @@
 
 Templates and notes for publishing `gard` to end-user package channels.
 The release workflow (`.github/workflows/release.yml`) uses these on
-every `v*` tag push.
+every `v*` tag push. Release assets are SDK-free: Native AOT when available,
+with a self-contained single-file fallback.
 
 ## Debian / Ubuntu (`.deb`)
 
 `debian/control.tmpl` is expanded with the current version and wrapped
 around the `linux-x64` binary via `dpkg-deb --build` inside CI. The
 resulting `gard_<version>_amd64.deb` is attached to the GitHub Release
-next to the tarballs.
+next to the tarballs. It does not depend on a system .NET runtime.
 
 ## Homebrew
 
@@ -22,5 +23,5 @@ commit the result as `Formula/gard.rb` in the
 ## Windows
 
 The `win-x64` zip produced by the release workflow is the distribution
-artifact. `gard.exe` is self-contained and has no external runtime
-dependencies.
+artifact. `gard.exe` is Native AOT when available, otherwise self-contained,
+and has no external .NET runtime dependency.

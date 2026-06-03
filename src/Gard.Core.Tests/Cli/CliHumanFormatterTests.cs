@@ -18,6 +18,27 @@ public class CliHumanFormatterTests
         Assert.Contains("UDP", text);
     }
 
+    [Fact]
+    public void FormatRich_HasPanelAndQuality()
+    {
+        var term = new CliTerminal(CliStyleOptions.Default, forceInteractive: true);
+        var text = CliHumanFormatter.Format(MakeResult(), term);
+
+        Assert.Contains("RESULTS", text);
+        Assert.Contains("THROUGHPUT", text);
+        Assert.Contains("QUALITY", text);
+        Assert.Contains("good", text);
+    }
+
+    [Fact]
+    public void Terminal_DisablesRichWhenPlain()
+    {
+        var term = new CliTerminal(new CliStyleOptions(Plain: true, NoColor: false, Style: "rich"), forceInteractive: true);
+
+        Assert.False(term.Rich);
+        Assert.False(term.Color);
+    }
+
     [Theory]
     [InlineData(999UL, "999 b/s")]
     [InlineData(1_500UL, "1.50 Kb/s")]

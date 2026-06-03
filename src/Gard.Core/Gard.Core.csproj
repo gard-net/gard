@@ -8,7 +8,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>Gard.Core</PackageId>
-    <Version>0.2.4</Version>
+    <Version>0.2.5</Version>
     <Authors>Marco Rojas</Authors>
     <Description>Platform-neutral core for the Landspeed Protocol (LSP/1.2): framing, transport, mDNS discovery, handshake and measurement engine. Used by gard (CLI) and reference apps.</Description>
     <PackageProjectUrl>https://github.com/gard-net/gard</PackageProjectUrl>

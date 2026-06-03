@@ -10,6 +10,10 @@ public sealed record ScanOptions(int Seconds);
 
 public sealed record HostOptions(string Name, int Port, bool DynamicPort);
 
+public sealed record InfoOptions(string Host, int Port);
+
+public sealed record WatchOptions(string Host, int Port, double IntervalS, TestCommandOptions Test);
+
 public sealed record TestCommandOptions
 {
     public required string Host { get; init; }
@@ -23,6 +27,34 @@ public sealed class CliOptionException(string message) : ArgumentException(messa
 
 public static class CliOptions
 {
+    private static readonly string[] GlobalValueOptions = ["--style"];
+    private static readonly string[] GlobalFlags = ["--plain", "--no-color"];
+
+    public static CliStyleOptions ParseGlobalStyle(string[] args)
+    {
+        var style = GetStringOpt(args, "--style", "rich").ToLowerInvariant();
+        if (style is not ("rich" or "plain")) throw new CliOptionException("--style must be rich or plain");
+        return new CliStyleOptions(HasFlag(args, "--plain"), HasFlag(args, "--no-color"), style);
+    }
+
+    public static string[] StripGlobalOptions(string[] args)
+    {
+        var kept = new List<string>();
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (GlobalFlags.Contains(args[i])) continue;
+            if (GlobalValueOptions.Contains(args[i]))
+            {
+                if (i == args.Length - 1 || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    throw new CliOptionException($"{args[i]} requires a value");
+                i++;
+                continue;
+            }
+            kept.Add(args[i]);
+        }
+        return kept.ToArray();
+    }
+
     public static ScanOptions ParseScan(string[] args)
     {
         var seconds = GetIntOpt(args, "--seconds", 10);
@@ -117,6 +149,32 @@ public static class CliOptions
                 TargetBitrateBps = bitrate,
             },
         };
+    }
+
+    public static InfoOptions ParseInfo(string[] args)
+    {
+        var host = GetStringOpt(args, "--host", "");
+        if (string.IsNullOrWhiteSpace(host) && args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal))
+            host = args[0];
+        if (string.IsNullOrWhiteSpace(host)) throw new CliOptionException("missing <host>");
+        var port = GetIntOpt(args, "--port", DiscoveryConstants.DefaultPort);
+        RequirePort(port, "--port");
+        return new InfoOptions(host, port);
+    }
+
+    public static WatchOptions ParseWatch(string[] args)
+    {
+        var interval = GetDoubleOpt(args, "--interval", 5);
+        RequireFinitePositive(interval, "--interval");
+
+        var testArgs = args.Contains("--format")
+            ? args
+            : [.. args, "--format", "human"];
+        if (!args.Contains("--duration")) testArgs = [.. testArgs, "--duration", "3"];
+        if (!args.Contains("--warmup")) testArgs = [.. testArgs, "--warmup", "0"];
+
+        var test = ParseTest(testArgs);
+        return new WatchOptions(test.Host, test.Port, interval, test);
     }
 
     public static bool HasFlag(string[] args, string name)

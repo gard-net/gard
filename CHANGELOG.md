@@ -8,6 +8,29 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-06-03
+
+Upgrade de interfaz pública y distribución. No cambia LSP/1.2 ni la forma wire.
+
+### Added
+- CLI humana rich con banner pixel-art ASCII, tablas, barras compactas,
+  colores ANSI opcionales y grading `excellent|good|degraded|poor`.
+- Flags globales `--plain`, `--no-color` y `--style rich|plain`.
+- Nuevos comandos `watch`, `info` y `doctor`.
+- Source generation JSON en la CLI para reducir dependencia de reflexión en AOT.
+- Release workflow intenta Native AOT por RID y conserva fallback
+  self-contained si una plataforma no puede publicar AOT.
+
+### Changed
+- `scan`, `host` y `test` tienen salida humana más acabada para terminales
+  interactivos, sin afectar JSON/CSV.
+- README y packaging aclaran que usuarios finales no necesitan .NET SDK ni
+  runtime cuando usan binarios de release.
+
+### Tests
+- Cobertura nueva para help de comandos, flags globales, defaults de `watch`,
+  modo rich/plain y panel humano.
+
 ## [0.2.4] — 2026-06-03
 
 Actualización general de calidad tras la reactivación del repo en la nueva raíz

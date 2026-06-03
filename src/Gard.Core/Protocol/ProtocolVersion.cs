@@ -24,7 +24,7 @@ public readonly record struct ProtocolVersion(int Major, int Minor)
     public bool IsCompatibleWith(ProtocolVersion peer) => Major == peer.Major;
 }
 
-internal sealed class ProtocolVersionJsonConverter : JsonConverter<ProtocolVersion>
+public sealed class ProtocolVersionJsonConverter : JsonConverter<ProtocolVersion>
 {
     public override ProtocolVersion Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {

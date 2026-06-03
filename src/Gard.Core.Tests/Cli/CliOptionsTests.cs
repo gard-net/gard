@@ -7,6 +7,17 @@ namespace Gard.Core.Tests.Cli;
 public class CliOptionsTests
 {
     [Fact]
+    public void ParseGlobalStyle_StripsGlobalFlags()
+    {
+        var style = CliOptions.ParseGlobalStyle(["--style", "plain", "--no-color", "test", "--host", "127.0.0.1"]);
+        var args = CliOptions.StripGlobalOptions(["--style", "plain", "--no-color", "test", "--host", "127.0.0.1"]);
+
+        Assert.True(style.NoColor);
+        Assert.Equal("plain", style.Style);
+        Assert.Equal(["test", "--host", "127.0.0.1"], args);
+    }
+
+    [Fact]
     public void ParseTest_DefaultsToTcpDown()
     {
         var options = CliOptions.ParseTest(["--host", "192.168.1.50"]);
@@ -92,5 +103,26 @@ public class CliOptionsTests
             ]));
 
         Assert.Contains("--payload must be between", ex.Message);
+    }
+
+    [Fact]
+    public void ParseWatch_UsesShortMeasurementDefaults()
+    {
+        var options = CliOptions.ParseWatch(["192.168.1.50", "--interval", "2"]);
+
+        Assert.Equal("192.168.1.50", options.Host);
+        Assert.Equal(2, options.IntervalS);
+        Assert.Equal(3, options.Test.Parameters.DurationS);
+        Assert.Equal(0, options.Test.Parameters.WarmupS);
+        Assert.Equal(TestDirection.Down, options.Test.Parameters.Direction);
+    }
+
+    [Fact]
+    public void ParseInfo_AcceptsPositionalHost()
+    {
+        var options = CliOptions.ParseInfo(["192.168.1.50"]);
+
+        Assert.Equal("192.168.1.50", options.Host);
+        Assert.Equal(7737, options.Port);
     }
 }
