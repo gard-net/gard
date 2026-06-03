@@ -77,8 +77,21 @@ static async Task<int> RunScanAsync(string[] a, CliTerminal term)
     }
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(options.Seconds));
+    var refreshTask = Task.Run(async () =>
+    {
+        while (!cts.IsCancellationRequested)
+        {
+            try
+            {
+                browser.Refresh();
+                await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
+            }
+            catch (OperationCanceledException) { break; }
+        }
+    });
     try { await foreach (var _ in browser.Events.ReadAllAsync(cts.Token)) { } }
     catch (OperationCanceledException) { }
+    await refreshTask;
 
     var peers = browser.CurrentPeers
         .OrderBy(p => p.DeviceName, StringComparer.OrdinalIgnoreCase)
