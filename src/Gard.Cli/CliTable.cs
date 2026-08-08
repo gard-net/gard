@@ -33,13 +33,16 @@ public static class CliTable
         return sb.ToString();
     }
 
-    public static string Bar(double ratio, int width = 24)
+    public static string Gauge(double ratio, int width = 24)
     {
         if (!double.IsFinite(ratio)) ratio = 0;
         ratio = Math.Clamp(ratio, 0, 1);
         var fill = (int)Math.Round(ratio * width);
-        return "[" + new string('#', fill) + new string('.', width - fill) + "]";
+        return new string('█', fill) + new string('░', width - fill);
     }
+
+    public static string Bar(double ratio, int width = 24)
+        => "[" + Gauge(ratio, width) + "]";
 
     private static string Border(IReadOnlyList<CliTableColumn> columns, bool dashed = false)
     {

@@ -73,46 +73,190 @@ public static class CliHumanFormatter
     private static string FormatRich(TestResult r, CliTerminal term)
     {
         var quality = CliQuality.Grade(r);
-        var target = r.Udp?.TargetBitrateBps > 0 ? r.Udp.TargetBitrateBps : Math.Max(r.MeanBps, r.PeakBps);
+        var declaredTarget = r.Udp?.TargetBitrateBps > 0 ? r.Udp.TargetBitrateBps : 0UL;
+        var target = Math.Max(Math.Max(r.MeanBps, r.PeakBps), declaredTarget);
         if (target == 0) target = r.MeanBps;
         var ratio = target == 0 ? 0 : r.MeanBps / (double)target;
+        var latencyRatio = 1.0 - Math.Clamp(r.PingP95Ms / 100.0, 0, 1);
+        var lossRatio = 1.0 - Math.Clamp(r.LossPct / 5.0, 0, 1);
+        var jitterRatio = 1.0 - Math.Clamp(r.JitterMs / 30.0, 0, 1);
+
         var lines = new List<string>
         {
-            $"{term.Green(">")} gard test {term.Cyan(r.PeerName)} {term.Dim("--duration " + r.DurationS.ToString("F0", CultureInfo.InvariantCulture) + "s --streams " + r.Streams)}",
-            "",
-            $"Target:    {r.PeerName}",
-            $"Protocol:  LSP/{r.ProtocolVersion}",
-            $"Direction: {r.Direction.ToString().ToLowerInvariant()}",
-            $"Streams:   {r.Streams}",
-            "",
-            "+------------------------------- RESULTS -------------------------------+",
-            $"| {term.Cyan("THROUGHPUT"),-70}|",
-            $"| {CliTable.Bar(ratio, 28)}  mean {FormatBps(r.MeanBps),12}  peak {FormatBps(r.PeakBps),12} |",
+            BoxTop(),
+            BoxLine($"GARD LINK METER  {GlyphFor(quality)}  {PaintGrade(term, quality, uppercase: true)}"),
+            BoxLine($"target {r.PeerName}   lsp/{r.ProtocolVersion}   {r.Direction.ToString().ToLowerInvariant()}   {r.Streams} stream{(r.Streams == 1 ? "" : "s")}   {r.DurationS.ToString("F0", CultureInfo.InvariantCulture)}s"),
+            BoxRule(),
+            BoxLine(term.Cyan("THROUGHPUT") + $"  MEAN {FormatBps(r.MeanBps)}   PEAK {FormatBps(r.PeakBps)}"),
+            BoxLine(PaintGauge(term, ratio, 42) + "  " + Percent(ratio)),
+            BoxLine(SignalTrace(term, ratio)),
         };
 
         if (r.ThroughputDown is { } down)
-            lines.Add($"| DOWNLOAD {CliTable.Bar(down.MeanBps / (double)Math.Max(down.PeakBps, 1UL), 24)} {FormatBps(down.MeanBps),12} |");
-        if (r.ThroughputUp is { } up)
-            lines.Add($"| UPLOAD   {CliTable.Bar(up.MeanBps / (double)Math.Max(up.PeakBps, 1UL), 24)} {FormatBps(up.MeanBps),12} |");
-
-        lines.AddRange([
-            $"| {term.Yellow("LATENCY"),-70}|",
-            $"| Min {r.PingMinMs,7:F2} ms   Avg {r.PingAvgMs,7:F2} ms   P95 {r.PingP95Ms,7:F2} ms   Max {r.PingMaxMs,7:F2} ms |",
-            $"| Jitter {r.JitterMs,7:F2} ms   Loss {r.LossPct,6:F2}%   Samples {r.PingSamples,5}                  |",
-        ]);
-
-        if (r.Udp is { } u)
         {
-            lines.Add($"| {term.Purple("UDP"),-70}|");
-            lines.Add($"| Sent {u.PacketsSent,8}  Received {u.PacketsReceived,8}  Lost {u.PacketsLost,6} ({u.LossPct:F2}%)        |");
+            var downRatio = down.PeakBps == 0 ? 0 : down.MeanBps / (double)down.PeakBps;
+            lines.Add(BoxLine($"▼ DOWN  {PaintGauge(term, downRatio, 24)}  mean {FormatBps(down.MeanBps),10}  peak {FormatBps(down.PeakBps),10}"));
+        }
+        if (r.ThroughputUp is { } up)
+        {
+            var upRatio = up.PeakBps == 0 ? 0 : up.MeanBps / (double)up.PeakBps;
+            lines.Add(BoxLine($"▲ UP    {PaintGauge(term, upRatio, 24)}  mean {FormatBps(up.MeanBps),10}  peak {FormatBps(up.PeakBps),10}"));
         }
 
         lines.AddRange([
-            $"| {term.Green("QUALITY"),-70}|",
-            $"| Grade: {CliQuality.Paint(term, quality),-63}|",
-            "+-----------------------------------------------------------------------+",
+            BoxRule(),
+            BoxLine(Card("LATENCY", $"p95 {Fmt2(r.PingP95Ms)} ms", latencyRatio, term) + "  " + Card("JITTER", $"{Fmt2(r.JitterMs)} ms", jitterRatio, term)),
+            BoxLine(Card("LOSS", $"{Fmt2(r.LossPct)}%", lossRatio, term) + $"  samples {r.PingSamples}"),
+        ]);
+
+        if (r.RttUnderLoadMs is { } rtt)
+        {
+            var rttRatio = 1.0 - Math.Clamp(rtt.P95Ms / 150.0, 0, 1);
+            lines.Add(BoxLine(Card("RTT UNDER LOAD", $"p95 {Fmt2(rtt.P95Ms)} ms · spikes {rtt.SpikesCount}", rttRatio, term)));
+        }
+
+        if (r.Udp is { } u)
+        {
+            var udpRatio = 1.0 - Math.Clamp(u.LossPct / 5.0, 0, 1);
+            lines.Add(BoxLine(Card("UDP DATAGRAMS", $"rx {u.PacketsReceived}/{u.PacketsSent} · lost {u.PacketsLost} · dup {u.DuplicateCount}", udpRatio, term)));
+            lines.Add(BoxLine($"          reorder {Fmt2(u.ReorderPct)}%   jitter {Fmt2(u.JitterMs)} ms" +
+                (u.TargetBitrateBps > 0 ? $"   target {FormatBps(u.TargetBitrateBps)} miss {Fmt2(u.BitrateMissPct)}%" : "")));
+        }
+
+        lines.AddRange([
+            BoxRule(),
+            BoxLine($"VERDICT  {GlyphFor(quality)} {CliQuality.Paint(term, quality)}  · local link is {VerdictCopy(quality)}"),
+            BoxBottom(),
         ]);
         return string.Join(Environment.NewLine, lines);
+    }
+
+    private const int DashboardWidth = 76;
+    private const int DashboardInnerWidth = DashboardWidth - 4;
+
+    private static string BoxTop() => "╔" + new string('═', DashboardWidth - 2) + "╗";
+    private static string BoxBottom() => "╚" + new string('═', DashboardWidth - 2) + "╝";
+    private static string BoxRule() => "║ " + new string('─', DashboardInnerWidth) + " ║";
+
+    private static string BoxLine(string content)
+    {
+        content = StripNewlines(content);
+        if (VisibleLength(content) > DashboardInnerWidth)
+            content = TruncateVisible(content, DashboardInnerWidth);
+        return "║ " + content + new string(' ', Math.Max(0, DashboardInnerWidth - VisibleLength(content))) + " ║";
+    }
+
+    private static string PaintGauge(CliTerminal term, double ratio, int width)
+    {
+        var gauge = CliTable.Gauge(ratio, width);
+        var fill = gauge.Count(c => c == '█');
+        var full = gauge[..fill];
+        var empty = gauge[fill..];
+        var paint = ratio switch
+        {
+            >= 0.85 => term.Green(full),
+            >= 0.65 => term.Cyan(full),
+            >= 0.35 => term.Yellow(full),
+            _ => term.Red(full),
+        };
+        return paint + term.Dim(empty);
+    }
+
+    private static string Card(string title, string value, double ratio, CliTerminal term)
+        => "┌─ " + term.Bold(title) + " " + PaintGauge(term, ratio, 10) + " " + value + " └";
+
+    private static string SignalTrace(CliTerminal term, double ratio)
+    {
+        var chars = ratio switch
+        {
+            >= 0.85 => "▁▂▃▄▅▆▇█▇▆▅▄▃▂▁",
+            >= 0.65 => "▁▃▅▇▆▄▅▇▅▃▁▃▅▆▇",
+            >= 0.35 => "▁▆▂▇▃▅▂▆▁▅▂▇▃▅▁",
+            _ => "▁▇▁▆▁▇▂▁▆▁▂▇▁▃▁",
+        };
+        return term.Dim("quality signature ") + term.Purple(chars) + term.Dim(" based on this result");
+    }
+
+    private static string Percent(double ratio)
+    {
+        if (!double.IsFinite(ratio)) ratio = 0;
+        return (Math.Clamp(ratio, 0, 1) * 100.0).ToString("F0", CultureInfo.InvariantCulture) + "%";
+    }
+
+    private static string Fmt2(double value)
+        => value.ToString("F2", CultureInfo.InvariantCulture);
+
+    private static string PaintGrade(CliTerminal term, LinkQuality quality, bool uppercase = false)
+    {
+        var label = CliQuality.Label(quality);
+        if (uppercase) label = label.ToUpperInvariant();
+        return quality switch
+        {
+            LinkQuality.Excellent => term.Green(label),
+            LinkQuality.Good => term.Cyan(label),
+            LinkQuality.Degraded => term.Yellow(label),
+            _ => term.Red(label),
+        };
+    }
+
+    private static string GlyphFor(LinkQuality quality) => quality switch
+    {
+        LinkQuality.Excellent => "●",
+        LinkQuality.Good => "●",
+        LinkQuality.Degraded => "◐",
+        _ => "○",
+    };
+
+    private static string VerdictCopy(LinkQuality quality) => quality switch
+    {
+        LinkQuality.Excellent => "excellent for demanding local workloads",
+        LinkQuality.Good => "healthy with minor headroom limits",
+        LinkQuality.Degraded => "usable but showing latency/loss pressure",
+        _ => "unstable; investigate Wi-Fi, cabling or congestion",
+    };
+
+    private static string StripNewlines(string text)
+        => text.Replace('\r', ' ').Replace('\n', ' ');
+
+    private static int VisibleLength(string text)
+    {
+        var count = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\u001b')
+            {
+                while (i < text.Length && text[i] != 'm') i++;
+                continue;
+            }
+            count++;
+        }
+        return count;
+    }
+
+    private static string TruncateVisible(string text, int width)
+    {
+        var sb = new System.Text.StringBuilder();
+        var count = 0;
+        var sawAnsi = false;
+        for (var i = 0; i < text.Length && count < width - 1; i++)
+        {
+            if (text[i] == '\u001b')
+            {
+                sawAnsi = true;
+                while (i < text.Length)
+                {
+                    sb.Append(text[i]);
+                    if (text[i] == 'm') break;
+                    i++;
+                }
+                continue;
+            }
+            sb.Append(text[i]);
+            count++;
+        }
+        if (sawAnsi) sb.Append("\u001b[0m");
+        sb.Append('…');
+        return sb.ToString();
     }
 
     public static string FormatBps(ulong bps)

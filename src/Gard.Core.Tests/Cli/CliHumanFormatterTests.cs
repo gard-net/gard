@@ -19,15 +19,96 @@ public class CliHumanFormatterTests
     }
 
     [Fact]
-    public void FormatRich_HasPanelAndQuality()
+    public void FormatRich_RendersDistinctiveAsciiDashboard()
     {
         var term = new CliTerminal(CliStyleOptions.Default, forceInteractive: true);
         var text = CliHumanFormatter.Format(MakeResult(), term);
 
-        Assert.Contains("RESULTS", text);
+        Assert.Contains("GARD LINK METER", text);
+        Assert.Contains("╔", text);
+        Assert.Contains("╚", text);
+        Assert.Contains("║", text);
         Assert.Contains("THROUGHPUT", text);
-        Assert.Contains("QUALITY", text);
+        Assert.Contains("█", text);
+        Assert.Contains("░", text);
+        Assert.Contains("MEAN", text);
+        Assert.Contains("PEAK", text);
+        Assert.Contains("┌─", text);
+        Assert.Contains("└", text);
+        Assert.Contains("LATENCY", text);
+        Assert.Contains("RTT UNDER LOAD", text);
+        Assert.Contains("UDP DATAGRAMS", text);
+        Assert.Contains("VERDICT", text);
+        Assert.Contains("●", text);
         Assert.Contains("good", text);
+    }
+
+    [Fact]
+    public void FormatRich_ShowsUpDownLanesWhenBidirectional()
+    {
+        var term = new CliTerminal(new CliStyleOptions(Plain: false, NoColor: true, Style: "rich"), forceInteractive: true);
+        var result = MakeResult() with
+        {
+            ThroughputUp = new ThroughputBody { MeanBps = 40_000_000, PeakBps = 50_000_000, PerStreamBps = [40_000_000] },
+            ThroughputDown = new ThroughputBody { MeanBps = 90_000_000, PeakBps = 110_000_000, PerStreamBps = [90_000_000] },
+        };
+
+        var text = CliHumanFormatter.Format(result, term);
+
+        Assert.Contains("▲ UP", text);
+        Assert.Contains("▼ DOWN", text);
+    }
+
+    [Fact]
+    public void FormatRich_BoxLinesAreAlignedWithoutColor()
+    {
+        var term = new CliTerminal(new CliStyleOptions(Plain: false, NoColor: true, Style: "rich"), forceInteractive: true);
+        var text = CliHumanFormatter.Format(MakeResult(), term);
+
+        var heroLines = text.Split(Environment.NewLine)
+            .Where(l => l.StartsWith("╔") || l.StartsWith("║") || l.StartsWith("╚"))
+            .ToList();
+        Assert.NotEmpty(heroLines);
+        Assert.Single(heroLines.Select(l => l.Length).Distinct());
+    }
+
+    [Theory]
+    [InlineData(0.0, 10)]
+    [InlineData(0.5, 10)]
+    [InlineData(1.0, 10)]
+    [InlineData(double.NaN, 10)]
+    public void Gauge_HasExactWidthAndProportionalFill(double ratio, int width)
+    {
+        var gauge = CliTable.Gauge(ratio, width);
+
+        Assert.Equal(width, gauge.Length);
+        var full = gauge.Count(c => c == '█');
+        if (ratio >= 1.0) Assert.Equal(width, full);
+        else if (ratio == 0.5) Assert.Equal(width / 2, full);
+        else Assert.Equal(0, full);
+    }
+
+    [Fact]
+    public void FormatRich_KeepsAnsiOutWhenNoColor()
+    {
+        var term = new CliTerminal(new CliStyleOptions(Plain: false, NoColor: true, Style: "rich"), forceInteractive: true);
+        var text = CliHumanFormatter.Format(MakeResult(), term);
+
+        Assert.Contains("GARD LINK METER", text);
+        Assert.Contains("█", text);
+        Assert.DoesNotContain("\u001b[", text);
+    }
+
+    [Fact]
+    public void FormatRich_ColorModeKeepsValidAnsiTerminators()
+    {
+        var term = new CliTerminal(CliStyleOptions.Default, forceInteractive: true);
+        var text = CliHumanFormatter.Format(MakeResult(), term);
+
+        Assert.Contains("\u001b[", text);
+        Assert.DoesNotContain("\u001b[0M", text);
+        Assert.DoesNotContain("\u001b[32M", text);
+        Assert.Contains("\u001b[0m", text);
     }
 
     [Fact]
