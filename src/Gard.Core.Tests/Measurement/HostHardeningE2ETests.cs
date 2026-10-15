@@ -126,6 +126,20 @@ public class HostHardeningE2ETests
     }
 
     [Fact(Timeout = 15_000)]
+    public async Task PeerClosingBeforeTestStart_IsReportedAsCleanClose()
+    {
+        // Lo que hace `gard info`: handshake y cierre, sin test_start.
+        await using var h = await Harness.OpenAsync();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var hostTask = h.RunHost(Capabilities.DefaultV1, cts.Token);
+
+        await h.ClientCtl.DisposeAsync();
+
+        var ex = await Assert.ThrowsAsync<LandspeedException>(() => hostTask);
+        Assert.Equal(LandspeedErrorKind.PeerClosedWithoutTest, ex.Kind);
+    }
+
+    [Fact(Timeout = 15_000)]
     public async Task Router_Terminated_FiresWhenPeerCloses()
     {
         await using var h = await Harness.OpenAsync();

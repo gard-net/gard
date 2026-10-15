@@ -93,6 +93,14 @@ public sealed class LandspeedException : Exception
         new(LandspeedErrorKind.TestRejected, $"test_start rechazado: {reason}",
             new Dictionary<string, object?> { ["reason"] = reason });
 
+    /// <summary>
+    /// El peer cerró la sesión de control sin pedir un test (p. ej. <c>gard info</c>,
+    /// que sólo hace handshake). Para el host es un cierre normal, no un error.
+    /// </summary>
+    public static LandspeedException PeerClosedWithoutTest(Exception? inner = null) =>
+        new(LandspeedErrorKind.PeerClosedWithoutTest, "El peer cerró la sesión sin pedir un test.",
+            new Dictionary<string, object?>(), inner);
+
     public static LandspeedException Cancelled() =>
         new(LandspeedErrorKind.Cancelled, "Operación cancelada.", new Dictionary<string, object?>());
 
@@ -125,4 +133,5 @@ public enum LandspeedErrorKind
     UdpNotNegotiated,
     PayloadOutOfRange,
     TestRejected,
+    PeerClosedWithoutTest,
 }

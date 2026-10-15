@@ -41,7 +41,16 @@ public static class MeasurementResponder
         try
         {
             // 2. Esperar test_start y validarlo antes de reservar recursos.
-            var (startId, parms) = await router.AwaitTestStartAsync(120_000, ct).ConfigureAwait(false);
+            ulong startId;
+            TestStartBody parms;
+            try
+            {
+                (startId, parms) = await router.AwaitTestStartAsync(120_000, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (router.Terminated.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw LandspeedException.PeerClosedWithoutTest(ex);
+            }
             if (TestStartValidator.Validate(parms, negotiatedCaps) is { } rejection)
             {
                 await TryRejectAsync(controlConnection, startId, rejection, ct).ConfigureAwait(false);

@@ -422,6 +422,11 @@ static async Task HandleSessionAsync(Socket socket, DeviceIdentity identity, Can
         PrintHostTestSummary(connId, result);
         LogEvent(connId, "ok", $"closed session={sess}");
     }
+    catch (LandspeedException ex) when (ex.Kind == LandspeedErrorKind.PeerClosedWithoutTest)
+    {
+        // `gard info` y sondeos: handshake y cierre, sin test. No es un error.
+        LogEvent(connId, "ok", "closed by peer (no test requested)");
+    }
     catch (Exception ex)
     {
         LogEvent(connId, "!!", $"error: {ex.Message}");
