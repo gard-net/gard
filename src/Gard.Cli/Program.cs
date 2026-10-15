@@ -13,9 +13,20 @@ using Gard.Core.Protocol;
 using Gard.Core.Transport;
 using Gard.Core.Utils;
 
-var style = CliOptions.ParseGlobalStyle(args);
-var term = new CliTerminal(style);
-var cleanArgs = CliOptions.StripGlobalOptions(args);
+CliTerminal term;
+string[] cleanArgs;
+try
+{
+    term = new CliTerminal(CliOptions.ParseGlobalStyle(args));
+    cleanArgs = CliOptions.StripGlobalOptions(args);
+}
+catch (CliOptionException ex)
+{
+    // Antes quedaba fuera del try: `--style fancy` abortaba con stack trace.
+    Console.Error.WriteLine($"gard: {ex.Message}");
+    Console.Error.WriteLine(CliErrors.HintFor(null));
+    return 2;
+}
 if (cleanArgs.Length == 0) { Console.Out.WriteLine(CliHelp.General()); return 1; }
 
 var sub = cleanArgs[0];
@@ -42,13 +53,14 @@ catch (CliOptionException ex)
 {
     Console.Error.WriteLine($"gard: {ex.Message}");
     Console.Error.WriteLine(CliErrors.HintFor(activeCommand));
-    return 2;
+    return CliErrors.UsageExitCode;
 }
 catch (Exception ex)
 {
+    // Error de ejecución (conexión, timeout, protocolo): el uso era correcto,
+    // así que no sugerimos --help.
     Console.Error.WriteLine($"gard: {ex.Message}");
-    Console.Error.WriteLine(CliErrors.HintFor(activeCommand));
-    return 2;
+    return CliErrors.RuntimeExitCode;
 }
 
 static int PrintVersion() { Console.Out.WriteLine(GardCliInfo.VersionString); return 0; }
@@ -58,7 +70,7 @@ static int Help(string[] a)
     Console.Out.WriteLine(a.Length > 0 ? CliHelp.ForCommand(a[0]) : CliHelp.General());
     return 0;
 }
-static int Fail(string msg, string? command) { Console.Error.WriteLine($"gard: {msg}"); Console.Error.WriteLine(CliErrors.HintFor(command)); return 2; }
+static int Fail(string msg, string? command) { Console.Error.WriteLine($"gard: {msg}"); Console.Error.WriteLine(CliErrors.HintFor(command)); return CliErrors.UsageExitCode; }
 
 static async Task<int> RunScanAsync(string[] a, CliTerminal term)
 {
@@ -258,18 +270,24 @@ static async Task<int> RunWatchAsync(string[] a, CliTerminal term)
     };
     var rows = new List<IReadOnlyList<string>>();
 
+    var sampleTimeout = TimeSpan.FromSeconds(options.Test.Parameters.DurationS + options.Test.Parameters.WarmupS + 15);
     while (!shutdownCts.IsCancellationRequested)
     {
         try
         {
             using var sampleCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownCts.Token);
-            sampleCts.CancelAfter(TimeSpan.FromSeconds(options.Test.Parameters.DurationS + options.Test.Parameters.WarmupS + 15));
+            sampleCts.CancelAfter(sampleTimeout);
             var result = await RunMeasurementAsync(options.Test, term, showProgress: false, sampleCts.Token);
             rows.Add(WatchRow(term, result));
             if (rows.Count > 12) rows.RemoveAt(0);
             Console.Out.WriteLine(term.Rich ? CliTable.Render(term, columns, rows) : string.Join("  ", rows[^1]));
         }
-        catch (OperationCanceledException) { break; }
+        catch (Exception) when (shutdownCts.IsCancellationRequested) { break; }
+        catch (Exception ex) when (ex is OperationCanceledException or LandspeedException { Kind: LandspeedErrorKind.Cancelled })
+        {
+            // Sólo venció el timeout de esta muestra: seguimos observando.
+            Console.Error.WriteLine($"gard: watch sample timed out after {sampleTimeout.TotalSeconds:F0}s");
+        }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"gard: watch sample failed: {ex.Message}");

@@ -11,8 +11,10 @@ public sealed class CliTerminal
     {
         Plain = options.Plain || options.Style == "plain";
         var interactive = forceInteractive ?? !Console.IsOutputRedirected;
-        var envNoColor = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NO_COLOR"));
+        // forceInteractive es el modo determinista de tests: ignora todo el
+        // entorno (NO_COLOR, TERM, CI) para que no dependan de la máquina.
         var honorEnvironment = forceInteractive is null;
+        var envNoColor = honorEnvironment && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NO_COLOR"));
         var dumb = honorEnvironment && string.Equals(Environment.GetEnvironmentVariable("TERM"), "dumb", StringComparison.OrdinalIgnoreCase);
         var ci = honorEnvironment && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI"));
         Rich = !Plain && options.Style == "rich" && interactive && !dumb && !ci;

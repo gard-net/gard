@@ -50,10 +50,8 @@ public static class CliTable
         return "+" + new string(dashed ? '-' : '=', width) + "+";
     }
 
+    // ANSI-aware: las celdas coloreadas (QUALITY, STATUS) no deben contar sus
+    // escapes como ancho ni perder el reset al recortarse.
     private static string Fit(string text, int width, bool right)
-    {
-        text = text.Replace('\r', ' ').Replace('\n', ' ');
-        if (text.Length > width) text = width <= 1 ? text[..width] : text[..(width - 1)] + ".";
-        return right ? text.PadLeft(width) : text.PadRight(width);
-    }
+        => CliText.Fit(text.Replace('\r', ' ').Replace('\n', ' '), width, right);
 }

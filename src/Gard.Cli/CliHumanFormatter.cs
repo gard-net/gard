@@ -141,9 +141,9 @@ public static class CliHumanFormatter
     private static string BoxLine(string content)
     {
         content = StripNewlines(content);
-        if (VisibleLength(content) > DashboardInnerWidth)
-            content = TruncateVisible(content, DashboardInnerWidth);
-        return "║ " + content + new string(' ', Math.Max(0, DashboardInnerWidth - VisibleLength(content))) + " ║";
+        if (CliText.VisibleLength(content) > DashboardInnerWidth)
+            content = CliText.TruncateVisible(content, DashboardInnerWidth);
+        return "║ " + content + new string(' ', Math.Max(0, DashboardInnerWidth - CliText.VisibleLength(content))) + " ║";
     }
 
     private static string PaintGauge(CliTerminal term, double ratio, int width)
@@ -217,47 +217,6 @@ public static class CliHumanFormatter
 
     private static string StripNewlines(string text)
         => text.Replace('\r', ' ').Replace('\n', ' ');
-
-    private static int VisibleLength(string text)
-    {
-        var count = 0;
-        for (var i = 0; i < text.Length; i++)
-        {
-            if (text[i] == '\u001b')
-            {
-                while (i < text.Length && text[i] != 'm') i++;
-                continue;
-            }
-            count++;
-        }
-        return count;
-    }
-
-    private static string TruncateVisible(string text, int width)
-    {
-        var sb = new System.Text.StringBuilder();
-        var count = 0;
-        var sawAnsi = false;
-        for (var i = 0; i < text.Length && count < width - 1; i++)
-        {
-            if (text[i] == '\u001b')
-            {
-                sawAnsi = true;
-                while (i < text.Length)
-                {
-                    sb.Append(text[i]);
-                    if (text[i] == 'm') break;
-                    i++;
-                }
-                continue;
-            }
-            sb.Append(text[i]);
-            count++;
-        }
-        if (sawAnsi) sb.Append("\u001b[0m");
-        sb.Append('…');
-        return sb.ToString();
-    }
 
     public static string FormatBps(ulong bps)
     {
