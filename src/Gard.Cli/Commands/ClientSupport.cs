@@ -15,7 +15,7 @@ public static class MeasurementRunner
 {
     public static async Task<TestResult> RunAsync(
         TestCommandOptions options,
-        LiveProgress? progress,
+        IMeasurementProgressSink? progress,
         Func<CancellationToken, Task<string>>? pairingCode,
         CancellationToken ct)
     {
@@ -104,6 +104,28 @@ public static class NetInfo
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// Tiempo de connect TCP en ms, o <c>null</c> si no responde en <paramref name="timeoutMs"/>.
+    /// Separa peers vivos de anuncios mDNS cacheados de hosts que ya no existen.
+    /// </summary>
+    public static async Task<double?> ProbeAsync(string? host, int? port, CancellationToken ct, int timeoutMs = 800)
+    {
+        if (host is null || port is not { } p) return null;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeoutMs);
+        using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            await socket.ConnectAsync(host, p, cts.Token).ConfigureAwait(false);
+            return sw.Elapsed.TotalMilliseconds;
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
     /// <summary><c>[::ffff:10.0.0.2]:5000</c> ⇒ <c>10.0.0.2:5000</c>; IPv6 real queda entre corchetes.</summary>

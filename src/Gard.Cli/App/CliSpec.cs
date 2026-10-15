@@ -116,6 +116,14 @@ public static class CliSpec
             MaxPositionals: 1,
             Notes: "Per-sample defaults: --duration 3 --warmup 0."),
 
+        new("tui", "Full-screen dashboard: discover peers and measure interactively.",
+            ["gard tui [host] [--port N] [--pair-code CODE]"],
+            [HostOpt, Port, PairCode],
+            ["gard tui", "gard tui 192.168.1.50"],
+            MaxPositionals: 1,
+            Notes: "Keys: enter measure · esc cancel · d direction · u tcp/udp · s streams · t duration ·\n" +
+                   "b udp rate · w watch · a add host · r rescan · ? help · q quit."),
+
         new("info", "Show a peer's protocol version and capabilities.",
             ["gard info <host> [--port N] [--json]"],
             [HostOpt, Port, PairCode, new("--json", null, "Print as JSON.", Short: "-J")],

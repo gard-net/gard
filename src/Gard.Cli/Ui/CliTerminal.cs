@@ -121,14 +121,14 @@ public sealed record CliSymbols(
     char BarFull, char BarEmpty, string Spark,
     string Ok, string Warn, string Fail, string Bullet, string Dot,
     string Up, string Down, string Arrow, string Ellipsis,
-    string[] Spinner)
+    string[] Spinner, string Pointer = ">")
 {
     public static CliSymbols Unicode { get; } = new(
         "╭", "╮", "╰", "╯", "─", "│", "─",
         '█', '░', "▁▂▃▄▅▆▇█",
         "✓", "!", "✗", "•", "·",
         "↑", "↓", "→", "…",
-        ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]);
+        ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], "▸");
 
     public static CliSymbols Ascii { get; } = new(
         "+", "+", "+", "+", "-", "|", "-",

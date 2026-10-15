@@ -14,6 +14,9 @@ public sealed record ScanOptions(int Seconds, bool Json = false, bool All = fals
 /// <param name="PairCode">Código fijo (<c>--pair-code</c>); <c>null</c> ⇒ generar uno al arrancar.</param>
 public sealed record HostOptions(string Name, int Port, bool DynamicPort, bool RequirePairing = false, string? PairCode = null);
 
+/// <param name="Host">Host a preseleccionar (opcional; si falta, sólo discovery).</param>
+public sealed record TuiOptions(string? Host, int Port, string? PairCode);
+
 public sealed record InfoOptions(string Host, int Port, string? PairCode = null, bool Json = false);
 
 /// <param name="Count">Muestras a tomar; <c>null</c> ⇒ hasta Ctrl+C.</param>
@@ -173,6 +176,16 @@ public static class CliOptions
                 TargetBitrateBps = bitrate,
             },
         };
+    }
+
+    public static TuiOptions ParseTui(string[] args)
+    {
+        var host = GetStringOpt(args, "--host", "");
+        if (string.IsNullOrWhiteSpace(host) && args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal))
+            host = args[0];
+        var port = GetIntOpt(args, "--port", DiscoveryConstants.DefaultPort);
+        RequirePort(port, "--port");
+        return new TuiOptions(string.IsNullOrWhiteSpace(host) ? null : host, port, GetPairCode(args));
     }
 
     public static InfoOptions ParseInfo(string[] args)

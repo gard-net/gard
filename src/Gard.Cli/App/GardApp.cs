@@ -78,6 +78,7 @@ public static class GardApp
                 "host" => await HostCommand.RunAsync(normalized, ctx).ConfigureAwait(false),
                 "test" => await TestCommand.RunAsync(normalized, ctx).ConfigureAwait(false),
                 "watch" => await WatchCommand.RunAsync(normalized, ctx).ConfigureAwait(false),
+                "tui" => await TuiCommand.RunAsync(normalized, ctx).ConfigureAwait(false),
                 "info" => await InfoCommand.RunAsync(normalized, ctx).ConfigureAwait(false),
                 "doctor" => DoctorCommand.Run(normalized, ctx),
                 "completions" => CompletionsCommand.Run(normalized, ctx),

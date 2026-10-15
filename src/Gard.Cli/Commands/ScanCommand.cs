@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Globalization;
-using System.Net.Sockets;
 using Gard.Core.Discovery;
 using Gard.Core.Protocol;
 
@@ -43,7 +41,7 @@ public static class ScanCommand
         var discovered = browser.CurrentPeers.OrderBy(p => p.DeviceName, StringComparer.OrdinalIgnoreCase).ToList();
         // mDNS cachea anuncios (PTR hasta 75 min): un host cerrado sin "goodbye"
         // seguía apareciendo. Un connect TCP corto separa vivos de fantasmas.
-        var probes = await Task.WhenAll(discovered.Select(p => ProbeAsync(p, ctx.Interrupted))).ConfigureAwait(false);
+        var probes = await Task.WhenAll(discovered.Select(p => NetInfo.ProbeAsync(p.Host, p.Port, ctx.Interrupted))).ConfigureAwait(false);
         var results = discovered.Zip(probes, (p, ms) => (Peer: p, ConnectMs: ms)).ToList();
 
         if (options.Json)
@@ -82,25 +80,6 @@ public static class ScanCommand
         if (!options.All && stale > 0) footer += $" {term.Symbols.Dot} {stale} stale hidden (--all)";
         ctx.Out.WriteLine(term.Dim(footer));
         return GardApp.Ok;
-    }
-
-    /// <summary>Tiempo de connect TCP en ms, o <c>null</c> si no responde en 800 ms.</summary>
-    private static async Task<double?> ProbeAsync(DiscoveredPeer peer, CancellationToken ct)
-    {
-        if (peer.Host is null || peer.Port is not { } port) return null;
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(800);
-        using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-        var sw = Stopwatch.StartNew();
-        try
-        {
-            await socket.ConnectAsync(peer.Host, port, cts.Token).ConfigureAwait(false);
-            return sw.Elapsed.TotalMilliseconds;
-        }
-        catch (Exception) when (!ct.IsCancellationRequested)
-        {
-            return null;
-        }
     }
 
     // IPv6 entre corchetes para que host:puerto no sea ambiguo.

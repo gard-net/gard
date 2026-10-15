@@ -153,13 +153,13 @@ public static class CliHumanFormatter
         return rtt.P95Ms >= 100 && rtt.P95Ms >= 5 * baseline ? (baseline, rtt.P95Ms) : null;
     }
 
-    private static string Grade(CliTerminal term, double value, double good, double ok, double warn, string text) =>
+    internal static string Grade(CliTerminal term, double value, double good, double ok, double warn, string text) =>
         value <= good ? term.Green(text)
         : value <= ok ? term.Cyan(text)
         : value <= warn ? term.Yellow(text)
         : term.Red(text);
 
-    private static string QualityGlyph(CliTerminal term, LinkQuality q) => q switch
+    internal static string QualityGlyph(CliTerminal term, LinkQuality q) => q switch
     {
         LinkQuality.Excellent => term.Green(term.Symbols.Ok),
         LinkQuality.Good => term.Cyan(term.Symbols.Ok),
@@ -167,7 +167,7 @@ public static class CliHumanFormatter
         _ => term.Red(term.Symbols.Fail),
     };
 
-    private static string VerdictCopy(LinkQuality quality) => quality switch
+    internal static string VerdictCopy(LinkQuality quality) => quality switch
     {
         LinkQuality.Excellent => "ready for demanding local workloads",
         LinkQuality.Good => "healthy, with minor headroom limits",

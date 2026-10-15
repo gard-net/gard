@@ -3,6 +3,13 @@ using Gard.Core.Measurement;
 
 namespace Gard.Cli;
 
+/// <summary>Destino del progreso de una medición: línea en stderr o la TUI.</summary>
+public interface IMeasurementProgressSink
+{
+    void SetPhase(string phase);
+    void OnMeasurement(MeasurementProgress progress);
+}
+
 /// <summary>
 /// Línea de progreso en stderr mientras corre una medición:
 /// <c>⠹ measuring  ████████░░░░  4.2/10s  912.4 Mb/s  ▃▅▆▇▆▇</c>.
@@ -11,7 +18,7 @@ namespace Gard.Cli;
 /// terminar, así stdout queda sólo con el resultado. Sin TTY (logs, CI) imprime
 /// una línea por fase y nada más: la salida sigue siendo legible en un archivo.
 /// </summary>
-public sealed class LiveProgress : IAsyncDisposable
+public sealed class LiveProgress : IAsyncDisposable, IMeasurementProgressSink
 {
     private readonly CliTerminal _term;
     private readonly TextWriter _err;

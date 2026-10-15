@@ -8,8 +8,31 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
-Mejoras surgidas de pruebas reales contra un Mac por Wi-Fi con un host LSP/1.1
-y la app LandSpeed en iPhone.
+## [0.4.0] — 2026-10-15
+
+`gard tui` y mejoras surgidas de pruebas reales contra un Mac por Wi-Fi con un
+host LSP/1.1 y la app LandSpeed en iPhone. LSP/1.2 sin cambios de forma wire.
+
+### Added
+- `gard tui [host]`: dashboard de pantalla completa (alternate screen, se
+  restaura al salir). Panel de peers por mDNS con latencia de connect y vivos
+  primero; panel de test con config, progreso en vivo, throughput y sparkline,
+  y resultado detallado (incluye aviso de bufferbloat); historial de
+  mediciones. Teclas: enter medir, esc cancelar, d/u/s/t/b config, w watch,
+  a agregar host, r re-escanear, ? ayuda, q salir. El código de pairing se pide
+  dentro de la TUI. Se adapta al tamaño, avisa si es muy chico, y respeta
+  ASCII/NO_COLOR. Vista y estado puros (testeados sin terminal).
+- `scan` verifica que cada peer responda (connect TCP) y muestra su latencia;
+  los anuncios mDNS cacheados de hosts que ya no existen se ocultan (`--all`
+  los lista). JSON: `reachable` y `connect_ms`. El host registra esas sondas
+  como tales, no como error.
+- Dashboard: aviso de **bufferbloat** cuando el RTT bajo carga supera 100 ms y
+  5× la línea base; "Loss" pasa a "Probe loss" (pings de control sin respuesta
+  en 500 ms, no paquetes de datos). JSON: campo `bufferbloat`.
+- `packaging/homebrew/publish-tap.sh vX.Y.Z`: actualiza el tap de Homebrew
+  desde un release publicado con las credenciales locales. Es el método de
+  publicación vigente (sin secret `HOMEBREW_TAP_TOKEN`); documentado en
+  `packaging/README.md` y `AGENTS.md`.
 
 ### Fixed
 - `gard test <host> -u` sin `-l` fallaba con "--payload must be between 64 and
@@ -29,19 +52,6 @@ y la app LandSpeed en iPhone.
 - Bidir TCP simultáneo: reporta subida y bajada por separado (`throughput.up` /
   `.down`), y `per_stream_bps` suma ambos sentidos (antes sólo lo recibido,
   inconsistente con `mean_bps`).
-
-### Added
-- `scan` verifica que cada peer responda (connect TCP) y muestra su latencia;
-  los anuncios mDNS cacheados de hosts que ya no existen se ocultan (`--all`
-  los lista). JSON: `reachable` y `connect_ms`. El host registra esas sondas
-  como tales, no como error.
-- Dashboard: aviso de **bufferbloat** cuando el RTT bajo carga supera 100 ms y
-  5× la línea base; "Loss" pasa a "Probe loss" (pings de control sin respuesta
-  en 500 ms, no paquetes de datos). JSON: campo `bufferbloat`.
-- `packaging/homebrew/publish-tap.sh vX.Y.Z`: actualiza el tap de Homebrew
-  desde un release publicado con las credenciales locales. Es el método de
-  publicación vigente (sin secret `HOMEBREW_TAP_TOKEN`); documentado en
-  `packaging/README.md` y `AGENTS.md`.
 
 ## [0.3.0] — 2026-10-15
 

@@ -14,6 +14,7 @@ runtime to install, and emits clean human, JSON and CSV output.
 ```sh
 gard host                       # on one machine
 gard test 192.168.1.50          # on another
+gard tui                        # or explore and measure interactively
 ```
 
 ```text
@@ -32,9 +33,10 @@ gard test 192.168.1.50          # on another
 ╰────────────────────────────────────────────────────────────────────────────╯
 ```
 
-> Status: `v0.3.0`, LSP/1.2. A redesigned CLI (live progress, adaptive
-> dashboard, completions, versioned JSON), pairing, and one-line installers.
-> LSP wire compatibility with 0.2.x and the Apple app is unchanged.
+> Status: `v0.4.0`, LSP/1.2. Adds `gard tui`, a full-screen interactive
+> dashboard, plus fixes found testing against real Macs and iPhones over Wi-Fi
+> (bufferbloat warning, stale-peer filtering, UDP defaults). LSP wire
+> compatibility with 0.2.x and the Apple app is unchanged.
 
 ## Install
 
@@ -109,6 +111,7 @@ gard help <command>
 | `gard host` | Listen for tests and advertise over mDNS. |
 | `gard test` | Measure a peer over TCP or UDP. |
 | `gard watch` | Repeated short measurements until Ctrl+C (or `--count`). |
+| `gard tui` | Full-screen dashboard: peers, live measurements and history. |
 | `gard info` | Show a peer's protocol version and capabilities. |
 | `gard doctor` | Diagnose the local environment and terminal. |
 | `gard completions` | Print a bash, zsh, fish or PowerShell completion script. |
@@ -212,6 +215,48 @@ gard watch 192.168.1.50 --json          # NDJSON, one test report per line
 ```
 
 Prints one table row per sample. With `--count`, exits `1` if every sample failed.
+
+### `gard tui`
+
+```sh
+gard tui                    # discover peers over mDNS
+gard tui 192.168.1.50       # preselect a host (also -p, --pair-code)
+```
+
+```text
+ gard 0.4.0 · LSP/1.2                                                    ? help  q quit
+╭─ Peers (2) ──────────────────╮╭─ Test ──────────────────────────────────────────────╮
+│ ▸ lab-mac           0.5 ms   ││ lab-mac  192.168.1.50:7737 · macos                  │
+│   iPhone            4.0 ms   ││ down · tcp · 4 streams · 5s                         │
+│                              ││                                                     │
+│                              ││ last result · lab-mac · 18:53:36                    │
+│                              ││ Throughput  11.77 Gb/s mean  17.09 Gb/s peak        │
+│                              ││             ▁▃▃▃▁▂▂▂▂▂▁█▃▅▅▃▄▄▃▄▃▄▄▄                │
+│                              ││ Latency     3.14 avg  8.87 p95 ms                   │
+│                              ││ Jitter      2.93 ms   probe loss 0.00%              │
+│                              ││ ✓ excellent · ready for demanding local workloads   │
+╰──────────────────────────────╯╰─────────────────────────────────────────────────────╯
+╭─ History ───────────────────────────────────────────────────────────────────────────╮
+│ TIME      PEER          MODE                 DOWN          UP     P95   QUALITY     │
+│ 18:53:36  lab-mac       down/tcp/4     11.77 Gb/s           -  8.9 ms   excellent   │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
+ enter run · d dir · u tcp/udp · s streams · t time · b rate · w watch · a add host
+```
+
+| Key | Action |
+| --- | --- |
+| `↑` `↓` / `j` `k` | Select a peer (live peers first, with TCP connect latency). |
+| `enter` | Measure the selected peer; progress, throughput and a sparkline update live. |
+| `esc` / `x` | Cancel the running test. |
+| `d` `u` `s` `t` `b` | Direction, TCP/UDP, streams, duration, UDP rate per stream. |
+| `w` | Watch: repeat the test after each run (cancel turns it off). |
+| `a` | Add a host by address (`ip`, `ip:port`, `[v6]:port`). |
+| `r` | Rescan the network. |
+| `?` | Help. `q` or `Ctrl+C` quits and restores your terminal. |
+
+If a host requires pairing, the TUI asks for the code in its footer and remembers
+it for the session. It needs an interactive terminal (on Windows, Windows
+Terminal or another VT-capable console); for logs and scripts use `gard watch`.
 
 ### `gard info` and `gard doctor`
 
