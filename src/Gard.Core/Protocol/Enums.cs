@@ -8,7 +8,7 @@ namespace Gard.Core.Protocol;
 // (PascalCase), pero el Swift espera lowercase. Este enum SÍ SALE AL WIRE LSP/1.x —
 // cambiar sin cuidado rompe interop con la app Apple.
 
-[JsonConverter(typeof(JsonStringEnumConverter<PeerPlatform>))]
+[JsonConverter(typeof(LspEnumConverter<PeerPlatform>))]
 public enum PeerPlatform
 {
     [JsonStringEnumMemberName("ios")]     Ios,
@@ -20,7 +20,7 @@ public enum PeerPlatform
     [JsonStringEnumMemberName("linux")]   Linux,
 }
 
-[JsonConverter(typeof(JsonStringEnumConverter<TestDirection>))]
+[JsonConverter(typeof(LspEnumConverter<TestDirection>))]
 public enum TestDirection
 {
     [JsonStringEnumMemberName("up")]    Up,
@@ -29,7 +29,7 @@ public enum TestDirection
 }
 
 /// <summary>LSP/1.1: modo del test bidireccional.</summary>
-[JsonConverter(typeof(JsonStringEnumConverter<BidirMode>))]
+[JsonConverter(typeof(LspEnumConverter<BidirMode>))]
 public enum BidirMode
 {
     [JsonStringEnumMemberName("simultaneous")] Simultaneous,
@@ -37,9 +37,20 @@ public enum BidirMode
 }
 
 /// <summary>LSP/1.2: transport del plano de datos. El control sigue siempre en TCP.</summary>
-[JsonConverter(typeof(JsonStringEnumConverter<TestTransport>))]
+[JsonConverter(typeof(LspEnumConverter<TestTransport>))]
 public enum TestTransport
 {
     [JsonStringEnumMemberName("tcp")] Tcp,
     [JsonStringEnumMemberName("udp")] Udp,
+}
+
+/// <summary>
+/// Como <see cref="JsonStringEnumConverter{TEnum}"/> pero rechaza números: el
+/// wire LSP usa strings y <c>"direction": 9</c> no debe decodificar a un valor
+/// fuera del enum.
+/// </summary>
+public sealed class LspEnumConverter<TEnum> : JsonStringEnumConverter<TEnum>
+    where TEnum : struct, Enum
+{
+    public LspEnumConverter() : base(namingPolicy: null, allowIntegerValues: false) { }
 }

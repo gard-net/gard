@@ -11,15 +11,23 @@ public readonly record struct ProtocolVersion(int Major, int Minor)
 
     public override string ToString() => $"{Major}.{Minor}";
 
+    /// <summary>
+    /// Acepta <c>"1"</c>, <c>"1.2"</c> y SemVer completo (<c>"1.2.0"</c>,
+    /// <c>"1.2.3-beta"</c>): el patch no afecta la compatibilidad (§9) y se ignora.
+    /// </summary>
     public static ProtocolVersion? Parse(string s)
     {
-        var parts = s.Split('.');
-        if (parts.Length is not (1 or 2)) return null;
-        if (!int.TryParse(parts[0], out var major)) return null;
+        var parts = s.Split('.', 3);
+        if (!TryParseNumber(parts[0], out var major)) return null;
         var minor = 0;
-        if (parts.Length == 2 && !int.TryParse(parts[1], out minor)) return null;
+        if (parts.Length >= 2 && !TryParseNumber(parts[1], out minor)) return null;
+        if (parts.Length == 3 && (parts[2].Length == 0 || !char.IsAsciiDigit(parts[2][0]))) return null;
         return new ProtocolVersion(major, minor);
     }
+
+    private static bool TryParseNumber(string s, out int value) =>
+        int.TryParse(s, System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out value);
 
     public bool IsCompatibleWith(ProtocolVersion peer) => Major == peer.Major;
 }

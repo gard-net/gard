@@ -78,7 +78,9 @@ public class ProtocolVersionTests
         Assert.Equal(new ProtocolVersion(1, 0), ProtocolVersion.Parse("1.0"));
         Assert.Equal(new ProtocolVersion(2, 0), ProtocolVersion.Parse("2"));
         Assert.Null(ProtocolVersion.Parse("abc"));
-        Assert.Null(ProtocolVersion.Parse("1.2.3"));
+        // §9 dice SemVer: un port que envía "1.2.3" es minor-compatible; el
+        // patch se ignora (antes se rechazaba y el hello fallaba con 1004).
+        Assert.Equal(new ProtocolVersion(1, 2), ProtocolVersion.Parse("1.2.3"));
     }
 
     [Fact]

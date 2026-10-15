@@ -33,6 +33,10 @@ public static class FrameCodec
 /// </summary>
 public sealed class FrameStreamParser
 {
+    private const int InitialCapacity = 4096;
+    /// <summary>Tras un frame grande el buffer vuelve a este tamaño si quedó casi vacío.</summary>
+    private const int ShrinkThreshold = 256 * 1024;
+
     private readonly int _maxFrameSize;
     private byte[] _buffer;
     private int _length;
@@ -40,7 +44,7 @@ public sealed class FrameStreamParser
     public FrameStreamParser(int maxFrameSize = FrameCodec.MaxFrameSize)
     {
         _maxFrameSize = maxFrameSize;
-        _buffer = new byte[4096];
+        _buffer = new byte[InitialCapacity];
         _length = 0;
     }
 
@@ -55,19 +59,24 @@ public sealed class FrameStreamParser
             _length += data.Length;
         }
         var frames = new List<Frame>();
-        while (TryExtract(out var frame))
+        // Se avanza un offset y se compacta una sola vez al final: desplazar el
+        // buffer por cada frame era O(n²) con muchos frames chicos por lectura.
+        var offset = 0;
+        while (TryExtract(ref offset, out var frame))
         {
             frames.Add(frame);
         }
+        Compact(offset);
         return frames;
     }
 
-    private bool TryExtract(out Frame frame)
+    private bool TryExtract(ref int offset, out Frame frame)
     {
         frame = null!;
-        if (_length < 4) return false;
+        var available = _length - offset;
+        if (available < 4) return false;
 
-        var declaredLen = BinaryPrimitives.ReadUInt32BigEndian(_buffer.AsSpan(0, 4));
+        var declaredLen = BinaryPrimitives.ReadUInt32BigEndian(_buffer.AsSpan(offset, 4));
 
         if (declaredLen == 0)
         {
@@ -79,28 +88,41 @@ public sealed class FrameStreamParser
         }
 
         var total = 4 + (int)declaredLen;
-        if (_length < total) return false;
+        if (available < total) return false;
 
-        var typeByte = _buffer[4];
+        var typeByte = _buffer[offset + 4];
         if (!FrameTypeExtensions.IsKnown(typeByte))
         {
             throw LandspeedException.UnknownFrameType(typeByte);
         }
 
         var payloadLen = (int)declaredLen - 1;
-        var payload = new byte[payloadLen];
-        Buffer.BlockCopy(_buffer, 5, payload, 0, payloadLen);
-
-        // Desplazar el buffer.
-        var remaining = _length - total;
-        if (remaining > 0)
-        {
-            Buffer.BlockCopy(_buffer, total, _buffer, 0, remaining);
-        }
-        _length = remaining;
+        var payload = payloadLen == 0 ? Array.Empty<byte>() : new byte[payloadLen];
+        Buffer.BlockCopy(_buffer, offset + 5, payload, 0, payloadLen);
+        offset += total;
 
         frame = new Frame((FrameType)typeByte, payload);
         return true;
+    }
+
+    private void Compact(int consumed)
+    {
+        if (consumed > 0)
+        {
+            var remaining = _length - consumed;
+            if (remaining > 0)
+            {
+                Buffer.BlockCopy(_buffer, consumed, _buffer, 0, remaining);
+            }
+            _length = remaining;
+        }
+        // Un solo frame de 16 MiB dejaba ~32 MiB retenidos por conexión para siempre.
+        if (_buffer.Length > ShrinkThreshold && _length <= InitialCapacity)
+        {
+            var small = new byte[InitialCapacity];
+            Buffer.BlockCopy(_buffer, 0, small, 0, _length);
+            _buffer = small;
+        }
     }
 
     private void EnsureCapacity(int required)
@@ -112,4 +134,7 @@ public sealed class FrameStreamParser
         Buffer.BlockCopy(_buffer, 0, newBuf, 0, _length);
         _buffer = newBuf;
     }
+
+    /// <summary>Capacidad actual del buffer interno (diagnóstico y tests).</summary>
+    public int BufferCapacity => _buffer.Length;
 }
