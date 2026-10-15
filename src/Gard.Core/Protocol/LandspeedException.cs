@@ -25,6 +25,8 @@ public sealed class LandspeedException : Exception
         LandspeedErrorKind.IncompatibleProtocolVersion => 2000,
         LandspeedErrorKind.PairingInvalid              => 3001,
         LandspeedErrorKind.PairingRequired             => 3002,
+        LandspeedErrorKind.UdpNotNegotiated            => 3003,
+        LandspeedErrorKind.PayloadOutOfRange           => 3004,
         _ => null,
     };
 
@@ -73,6 +75,24 @@ public sealed class LandspeedException : Exception
         new(LandspeedErrorKind.PairingRequired, "Se requiere emparejamiento antes de esta operación.",
             new Dictionary<string, object?>());
 
+    public static LandspeedException UdpNotNegotiated() =>
+        new(LandspeedErrorKind.UdpNotNegotiated,
+            "Transport UDP solicitado pero udp_data_plane no fue negociado.",
+            new Dictionary<string, object?>());
+
+    public static LandspeedException PayloadOutOfRange(int payloadSize, int min, int max) =>
+        new(LandspeedErrorKind.PayloadOutOfRange,
+            $"payload_size {payloadSize} fuera de rango [{min}, {max}].",
+            new Dictionary<string, object?> { ["payloadSize"] = payloadSize, ["min"] = min, ["max"] = max });
+
+    /// <summary>
+    /// <c>test_start</c> con parámetros inaceptables para el host. No tiene código
+    /// wire propio: se comunica con <c>test_start_ack {accepted:false, reason}</c>.
+    /// </summary>
+    public static LandspeedException TestRejected(string reason) =>
+        new(LandspeedErrorKind.TestRejected, $"test_start rechazado: {reason}",
+            new Dictionary<string, object?> { ["reason"] = reason });
+
     public static LandspeedException Cancelled() =>
         new(LandspeedErrorKind.Cancelled, "Operación cancelada.", new Dictionary<string, object?>());
 
@@ -102,4 +122,7 @@ public enum LandspeedErrorKind
     Timeout,
     Transport,
     InternalInconsistency,
+    UdpNotNegotiated,
+    PayloadOutOfRange,
+    TestRejected,
 }

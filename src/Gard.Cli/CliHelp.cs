@@ -115,13 +115,13 @@ public static class CliHelp
           --port N         TCP control port. Default: 7737.
           --direction DIR  up, down or bidir. Default: down.
           --streams N      Parallel streams, 1..32. Default: 1.
-          --duration S     Measurement duration in seconds. Default: 10.
-          --warmup S       Warmup before measuring. Default: 1.
-          --payload BYTES  Payload size. TCP min: 512. UDP range: 64..65507.
+          --duration S     Measurement duration in seconds, max 3600. Default: 10.
+          --warmup S       Warmup before measuring, max 60. Default: 1.
+          --payload BYTES  Payload size. TCP range: 512..4194304. UDP range: 64..65507.
           --transport T    tcp or udp. Default: tcp.
           --bitrate BPS    UDP target bitrate per stream, e.g. 200M or 1.5G.
           --bidir-mode M   simultaneous or sequential. UDP supports simultaneous only.
-          --gap S          Gap between sequential bidirectional phases. Default: 0.5.
+          --gap S          Gap between sequential bidirectional phases, max 60. Default: 0.5.
           --format F       human, json or csv. Default: human.
           --label ID       Label included in CSV output.
           --csv-header     Print the CSV header and exit.

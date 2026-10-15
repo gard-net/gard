@@ -8,6 +8,37 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
+Endurecimiento del host frente a peers hostiles o que desaparecen. LSP/1.2 sin
+cambios de forma wire; el host ahora emite códigos ya definidos en la spec.
+
+### Security
+- `gard host` valida `test_start` antes de reservar recursos: `streams` 1..32,
+  `duration_s` (0, 3600], `warmup_s` y `gap_s` [0, 60], `payload_size` TCP
+  1..4 MiB y UDP 64..65507, enums definidos. Payload fuera de rango ⇒ `error`
+  3004; resto ⇒ `test_start_ack {accepted:false, reason}`.
+- UDP sin `udp_data_plane` negociado ⇒ `error` 3003 (§12.1).
+- Handshake con plazo (10 s; 2 min con pairing) en host y cliente: un peer que
+  conecta y no envía `hello` ya no retiene la sesión; `gard info` ya no se
+  cuelga ante un host mudo.
+- `gard host` acepta como máximo 4 sesiones simultáneas.
+
+### Fixed
+- El host aborta la sesión cuando el cliente se desconecta, en vez de seguir
+  enviando hasta `duration_s` (`ControlMessageRouter.Terminated`).
+- UDP host: un paquete de datos que llegaba antes de su `HELLO_UDP` causaba
+  `NullReferenceException`; ahora se cuenta. Su timestamp usaba ticks de
+  `Stopwatch` en vez de ns.
+- UDP host: `test_end` se esperaba 120 s fijos, así que todo test UDP ≥ 120 s
+  fallaba; ahora el plazo deriva de `duration_s + warmup_s`.
+- `test_start_ack` hace eco del `id` del `test_start` (§3).
+- CLI: `--payload` TCP acotado a 4 MiB (antes `int.MaxValue`, que superaba el
+  límite de frame y daba un "éxito" con 0 bps); `--duration`, `--warmup` y
+  `--gap` con máximos alineados al host.
+
+### Tests
+- Validador de `test_start`, rechazos 3003/3004/ack negativo end-to-end,
+  desconexión a mitad de fase, dato UDP antes del HELLO, timeouts de handshake.
+
 ## [0.2.6] — 2026-06-03
 
 Hardening de confiabilidad tras las primeras pruebas Mac ↔ HP con `v0.2.5`.

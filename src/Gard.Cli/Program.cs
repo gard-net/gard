@@ -152,12 +152,26 @@ static async Task<int> RunHostAsync(string[] a, CliTerminal term)
     Console.CancelKeyPress += (_, ev) => { ev.Cancel = true; shutdownCts.Cancel(); };
     AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdownCts.Cancel();
 
+    // Tope de sesiones simultáneas: sin pairing cualquier peer de la LAN puede
+    // conectarse, y cada sesión reserva sockets, hilos y buffers. Sin `using`:
+    // las sesiones en vuelo hacen Release después de que este método retorna.
+    var sessionSlots = new SemaphoreSlim(GardCliInfo.MaxConcurrentHostSessions);
     while (!shutdownCts.IsCancellationRequested)
     {
         Socket ctl;
         try { ctl = await listener.AcceptSocketAsync(shutdownCts.Token); }
         catch (OperationCanceledException) { break; }
-        _ = Task.Run(() => HandleSessionAsync(ctl, identity, shutdownCts.Token));
+        if (!sessionSlots.Wait(0))
+        {
+            LogEvent(ShortId(), "!!", $"rejected connection from {ctl.RemoteEndPoint?.ToString() ?? "?"}: {GardCliInfo.MaxConcurrentHostSessions} sessions already active");
+            ctl.Dispose();
+            continue;
+        }
+        _ = Task.Run(async () =>
+        {
+            try { await HandleSessionAsync(ctl, identity, shutdownCts.Token); }
+            finally { sessionSlots.Release(); }
+        });
     }
 
     Println("");
@@ -384,7 +398,8 @@ static async Task HandleSessionAsync(Socket socket, DeviceIdentity identity, Can
 
         var dataPlane = new TcpDataPlane { BindAddress = IPAddress.IPv6Any };
         var result = await MeasurementResponder.RunAsync(
-            transport, router, dataPlane, hs.SessionId, tickIntervalMs: 200, cancellationToken: ct);
+            transport, router, dataPlane, hs.SessionId, tickIntervalMs: 200,
+            negotiatedCaps: hs.NegotiatedCaps, cancellationToken: ct);
 
         PrintHostTestSummary(connId, result);
         LogEvent(connId, "ok", $"closed session={sess}");

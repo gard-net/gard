@@ -15,11 +15,27 @@ public static class ClientHandshake
     /// <param name="providePairingCode">Invocado si el host responde
     /// <c>requires_pairing = true</c>. Si es <c>null</c> en ese caso, se
     /// lanza <c>LandspeedException.PairingRequired</c>.</param>
-    public static async Task<HandshakeOutcome> PerformAsync(
+    /// <param name="timeout">Plazo total del handshake (incluye
+    /// <paramref name="providePairingCode"/>). <c>null</c> ⇒
+    /// <see cref="HandshakeTimeouts.Default"/>, o <see cref="HandshakeTimeouts.WithPairing"/>
+    /// si hay proveedor de pairing. Vencido ⇒ <c>LandspeedException.Timeout</c>.</param>
+    public static Task<HandshakeOutcome> PerformAsync(
         IFrameTransport transport,
         DeviceIdentity identity,
         Func<CancellationToken, Task<string>>? providePairingCode = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? timeout = null)
+    {
+        var limit = timeout ?? (providePairingCode is null ? HandshakeTimeouts.Default : HandshakeTimeouts.WithPairing);
+        return HandshakeTimeouts.RunAsync(limit, cancellationToken,
+            ct => PerformCoreAsync(transport, identity, providePairingCode, ct));
+    }
+
+    private static async Task<HandshakeOutcome> PerformCoreAsync(
+        IFrameTransport transport,
+        DeviceIdentity identity,
+        Func<CancellationToken, Task<string>>? providePairingCode,
+        CancellationToken cancellationToken)
     {
         await using var stream = new ControlStream(transport, cancellationToken);
 
@@ -115,15 +131,32 @@ public static class ClientHandshake
 /// <summary>Handshake como host (acepta <c>hello</c>).</summary>
 public static class HostHandshake
 {
-    public static async Task<HandshakeOutcome> AcceptAsync(
+    /// <param name="timeout">Plazo total para completar el handshake. Sin él, un
+    /// peer que conecta y no envía <c>hello</c> retiene la sesión indefinidamente.
+    /// <c>null</c> ⇒ <see cref="HandshakeTimeouts.Default"/>, o
+    /// <see cref="HandshakeTimeouts.WithPairing"/> si el validador exige pairing.</param>
+    public static Task<HandshakeOutcome> AcceptAsync(
         IFrameTransport transport,
         DeviceIdentity identity,
         string? sessionId = null,
         IPairingValidator? pairing = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeSpan? timeout = null)
     {
         pairing ??= new AlwaysAcceptPairing();
         sessionId ??= Guid.NewGuid().ToString();
+        var limit = timeout ?? (pairing.RequiresPairing() ? HandshakeTimeouts.WithPairing : HandshakeTimeouts.Default);
+        return HandshakeTimeouts.RunAsync(limit, cancellationToken,
+            ct => AcceptCoreAsync(transport, identity, sessionId, pairing, ct));
+    }
+
+    private static async Task<HandshakeOutcome> AcceptCoreAsync(
+        IFrameTransport transport,
+        DeviceIdentity identity,
+        string sessionId,
+        IPairingValidator pairing,
+        CancellationToken cancellationToken)
+    {
         await using var stream = new ControlStream(transport, cancellationToken);
 
         // --- hello ---
@@ -198,5 +231,33 @@ public static class HostHandshake
                 ct).ConfigureAwait(false);
         }
         catch { /* best effort */ }
+    }
+}
+
+/// <summary>Plazos del handshake LSP compartidos por cliente y host.</summary>
+public static class HandshakeTimeouts
+{
+    /// <summary>hello → hello_ack → clock_sync en LAN toma milisegundos.</summary>
+    public static readonly TimeSpan Default = TimeSpan.FromSeconds(10);
+
+    /// <summary>Con pairing hay un humano tipeando el código.</summary>
+    public static readonly TimeSpan WithPairing = TimeSpan.FromMinutes(2);
+
+    internal static async Task<T> RunAsync<T>(
+        TimeSpan timeout, CancellationToken cancellationToken, Func<CancellationToken, Task<T>> body)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(timeout);
+        try
+        {
+            return await body(cts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not LandspeedException { Kind: LandspeedErrorKind.Timeout }
+            && cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // Al vencer el plazo el stream de frames se corta y la falla puede
+            // aparecer como OCE o como "stream cerrado"; la causa es el timeout.
+            throw LandspeedException.Timeout();
+        }
     }
 }

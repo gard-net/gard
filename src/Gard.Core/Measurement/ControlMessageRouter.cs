@@ -18,6 +18,9 @@ public sealed class ControlMessageRouter : IAsyncDisposable
     private readonly ControlStream _stream;
     private readonly object _gate = new();
     private readonly CancellationTokenSource _cts = new();
+    // No se dispone: sin timers no retiene recursos, y así Terminated sigue
+    // siendo consultable después de DisposeAsync.
+    private readonly CancellationTokenSource _terminatedCts = new();
     private Task? _loopTask;
     private Exception? _terminal;
 
@@ -50,6 +53,13 @@ public sealed class ControlMessageRouter : IAsyncDisposable
     public ChannelReader<TestTickBody> Ticks => _ticks.Reader;
     public ChannelReader<(ulong Id, PingBody Body)> Pings => _pings.Reader;
     public ChannelReader<GoodbyeBody> Goodbyes => _goodbyes.Reader;
+
+    /// <summary>
+    /// Se cancela cuando el router termina: el peer cerró la conexión, envió
+    /// <c>error</c>, el stream falló o se dispuso el router. Permite a los
+    /// orquestadores abortar fases largas en vez de correr hasta su deadline.
+    /// </summary>
+    public CancellationToken Terminated => _terminatedCts.Token;
 
     public ControlMessageRouter(ControlStream stream)
     {
@@ -225,6 +235,8 @@ public sealed class ControlMessageRouter : IAsyncDisposable
         _ticks.Writer.TryComplete(ex);
         _pings.Writer.TryComplete(ex);
         _goodbyes.Writer.TryComplete(ex);
+        // Async: los callbacks no corren en el hilo del loop de lectura.
+        _ = _terminatedCts.CancelAsync();
     }
 
     // ── API cliente ──────────────────────────────────────────────────────────

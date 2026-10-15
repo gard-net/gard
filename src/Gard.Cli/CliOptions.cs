@@ -115,10 +115,15 @@ public static class CliOptions
 
         if (fmtStr is not ("human" or "json" or "csv"))
             throw new CliOptionException($"--format must be human, json or csv (received: {fmtStr})");
-        RequireRange(streams, 1, 32, "--streams");
+        // Mismos límites que aplica el host (TestStartValidator): fallar acá
+        // da un mensaje claro en vez de un rechazo remoto.
+        RequireRange(streams, 1, TestLimits.MaxStreams, "--streams");
         RequireFinitePositive(duration, "--duration");
+        RequireMax(duration, TestLimits.MaxDurationS, "--duration");
         RequireFiniteNonNegative(warmup, "--warmup");
+        RequireMax(warmup, TestLimits.MaxWarmupS, "--warmup");
         RequireFiniteNonNegative(gap, "--gap");
+        RequireMax(gap, TestLimits.MaxGapS, "--gap");
         if (transport == TestTransport.Udp)
         {
             RequireRange(payload, UdpDataPlane.MinPayloadSize, UdpDataPlane.MaxPayloadSize, "--payload");
@@ -127,7 +132,7 @@ public static class CliOptions
         }
         else
         {
-            RequireRange(payload, 512, int.MaxValue, "--payload");
+            RequireRange(payload, 512, TestLimits.MaxTcpPayloadSize, "--payload");
         }
 
         return new TestCommandOptions
@@ -244,6 +249,12 @@ public static class CliOptions
     {
         if (!double.IsFinite(value) || value <= 0)
             throw new CliOptionException($"{name} must be > 0");
+    }
+
+    private static void RequireMax(double value, double max, string name)
+    {
+        if (value > max)
+            throw new CliOptionException($"{name} must be <= {max.ToString(CultureInfo.InvariantCulture)}");
     }
 
     private static void RequireFiniteNonNegative(double value, string name)

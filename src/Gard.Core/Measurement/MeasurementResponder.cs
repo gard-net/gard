@@ -18,48 +18,60 @@ public static class MeasurementResponder
         ulong TotalBytes,
         double DurS);
 
+    /// <param name="negotiatedCaps">Caps del handshake. Si se pasan, el host
+    /// rechaza <c>transport=udp</c> sin <c>udp_data_plane</c> (§12.1, code 3003).</param>
     public static async Task<ResultBody> RunAsync(
         IFrameTransport controlConnection,
         ControlMessageRouter router,
         IDataPlane dataPlane,
         string sessionId,
         int tickIntervalMs = 200,
+        Capabilities? negotiatedCaps = null,
         CancellationToken cancellationToken = default)
     {
+        // La sesión también termina si el peer se desconecta: sin esto el loop de
+        // fases corría hasta duration_s aunque el cliente ya no existiera.
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, router.Terminated);
+        var ct = sessionCts.Token;
+
         // 1. Ping responder en paralelo durante toda la sesión.
-        using var pingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var pingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var pingTask = PingResponder.RunAsync(controlConnection, router, pingCts.Token);
 
         try
         {
-            // 2. Esperar test_start.
-            var (_, parms) = await router.AwaitTestStartAsync(120_000, cancellationToken).ConfigureAwait(false);
+            // 2. Esperar test_start y validarlo antes de reservar recursos.
+            var (startId, parms) = await router.AwaitTestStartAsync(120_000, ct).ConfigureAwait(false);
+            if (TestStartValidator.Validate(parms, negotiatedCaps) is { } rejection)
+            {
+                await TryRejectAsync(controlConnection, startId, rejection, ct).ConfigureAwait(false);
+                throw rejection;
+            }
 
             // LSP/1.2: si el test es UDP, delega al orquestador UDP.
             if (parms.Transport == TestTransport.Udp)
             {
                 return await UdpMeasurement.RunHostAsync(
-                    controlConnection, router, parms, sessionId,
-                    cancellationToken).ConfigureAwait(false);
+                    controlConnection, router, startId, parms, sessionId,
+                    ct).ConfigureAwait(false);
             }
 
             // 3. Abrir N listeners, mandar ack, aceptar conexiones (en ese orden).
-            var acceptance = await dataPlane.HostOpenAsync(parms.Streams, cancellationToken).ConfigureAwait(false);
-            var ackId = NextRandomId();
+            var acceptance = await dataPlane.HostOpenAsync(parms.Streams, ct).ConfigureAwait(false);
             await controlConnection.SendControlAsync(
-                new TestStartAckMessage(ackId, new TestStartAckBody
+                new TestStartAckMessage(startId, new TestStartAckBody
                 {
                     Accepted = true,
                     DataPorts = acceptance.Ports,
                 }),
-                cancellationToken).ConfigureAwait(false);
+                ct).ConfigureAwait(false);
 
-            var dataConns = await dataPlane.AcceptHostAsync(acceptance, 15_000, cancellationToken).ConfigureAwait(false);
+            var dataConns = await dataPlane.AcceptHostAsync(acceptance, 15_000, ct).ConfigureAwait(false);
             try
             {
                 return await RunAfterDataPlaneReadyAsync(
                     controlConnection, router, dataConns,
-                    parms, sessionId, tickIntervalMs, cancellationToken).ConfigureAwait(false);
+                    parms, sessionId, tickIntervalMs, ct).ConfigureAwait(false);
             }
             finally
             {
@@ -69,11 +81,40 @@ public static class MeasurementResponder
                 }
             }
         }
+        catch (Exception ex) when (
+            ex is OperationCanceledException or LandspeedException { Kind: LandspeedErrorKind.Cancelled }
+            && router.Terminated.IsCancellationRequested
+            && !cancellationToken.IsCancellationRequested)
+        {
+            throw LandspeedException.Transport("el peer se desconectó durante la sesión", ex);
+        }
         finally
         {
             pingCts.Cancel();
             try { await pingTask.ConfigureAwait(false); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Responde a un <c>test_start</c> inválido con el mismo <c>id</c>: <c>error</c>
+    /// si el caso tiene código wire (3003/3004), o <c>test_start_ack</c> con
+    /// <c>accepted=false</c> en el resto.
+    /// </summary>
+    private static async Task TryRejectAsync(
+        IFrameTransport controlConnection, ulong testStartId, LandspeedException rejection, CancellationToken ct)
+    {
+        ControlMessage msg = rejection.WireCode is int code
+            ? new ErrorMessage(testStartId, new ErrorBody { Code = code, Message = rejection.Message })
+            : new TestStartAckMessage(testStartId, new TestStartAckBody
+            {
+                Accepted = false,
+                DataPorts = [],
+                Reason = rejection.Context.TryGetValue("reason", out var r) && r is string reason
+                    ? reason
+                    : rejection.Message,
+            });
+        try { await controlConnection.SendControlAsync(msg, ct).ConfigureAwait(false); }
+        catch { /* best effort: el peer puede haberse ido */ }
     }
 
     private static async Task<ResultBody> RunAfterDataPlaneReadyAsync(

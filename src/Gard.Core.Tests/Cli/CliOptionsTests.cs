@@ -63,6 +63,10 @@ public class CliOptionsTests
     [InlineData("--gap", "NaN")]
     [InlineData("--payload", "10")]
     [InlineData("--bitrate", "-1M")]
+    [InlineData("--streams", "33")]
+    [InlineData("--duration", "3601")]
+    [InlineData("--warmup", "61")]
+    [InlineData("--gap", "61")]
     public void ParseTest_RejectsInvalidValues(string name, string value)
     {
         Assert.Throws<CliOptionException>(() =>
@@ -103,6 +107,30 @@ public class CliOptionsTests
             ]));
 
         Assert.Contains("--payload must be between", ex.Message);
+    }
+
+    [Fact]
+    public void ParseTest_RejectsTcpPayloadAboveHostLimit()
+    {
+        // El host rechaza > MaxTcpPayloadSize con 3004; el CLI falla antes y claro.
+        var ex = Assert.Throws<CliOptionException>(() =>
+            CliOptions.ParseTest([
+                "--host", "127.0.0.1",
+                "--payload", (TestLimits.MaxTcpPayloadSize + 1).ToString(),
+            ]));
+
+        Assert.Contains("--payload must be between", ex.Message);
+    }
+
+    [Fact]
+    public void ParseTest_AcceptsTcpPayloadAtHostLimit()
+    {
+        var options = CliOptions.ParseTest([
+            "--host", "127.0.0.1",
+            "--payload", TestLimits.MaxTcpPayloadSize.ToString(),
+        ]);
+
+        Assert.Equal(TestLimits.MaxTcpPayloadSize, options.Parameters.PayloadSize);
     }
 
     [Fact]

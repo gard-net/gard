@@ -2,6 +2,7 @@ using System.Net;
 using Gard.Core.Models;
 using Gard.Core.Protocol;
 using Gard.Core.Transport;
+using Gard.Core.Utils;
 
 namespace Gard.Core.Measurement;
 
@@ -150,6 +151,7 @@ public static class UdpMeasurement
     public static async Task<ResultBody> RunHostAsync(
         IFrameTransport controlConnection,
         ControlMessageRouter router,
+        ulong testStartId,
         TestStartBody parms,
         string sessionId,
         CancellationToken ct)
@@ -169,14 +171,18 @@ public static class UdpMeasurement
         await using var hostSockets = UdpDataPlane.HostOpen(parms.Streams, IPAddress.IPv6Any);
 
         await controlConnection.SendControlAsync(
-            new TestStartAckMessage(NextRandomId(), new TestStartAckBody
+            new TestStartAckMessage(testStartId, new TestStartAckBody
             {
                 Accepted = true,
                 DataPorts = hostSockets.Ports,
             }), ct).ConfigureAwait(false);
 
         // 1) Recibir HELLO_UDP (seq=0) en cada socket → aprendemos endpoint cliente.
-        var stats = hostRecvs ? new UdpReceiverStats[parms.Streams] : null;
+        // Los stats existen antes del drain: datos que llegan antes que su HELLO
+        // (reordenado o HELLO perdido) se cuentan vía onStrayData.
+        var stats = hostRecvs
+            ? Enumerable.Range(0, parms.Streams).Select(_ => new UdpReceiverStats()).ToArray()
+            : null;
         var endpoints = await UdpDataPlane.HostDrainHelloAsync(
             hostSockets,
             timeoutMs: 15_000,
@@ -184,7 +190,7 @@ public static class UdpMeasurement
                 ? (idx, r) =>
                 {
                     if (UdpDataPlane.TryParseHeader(r.Buffer, out var s, out var ts, out _))
-                        stats![idx].OnPacket(s, ts, (ulong)System.Diagnostics.Stopwatch.GetTimestamp(), r.Buffer.Length);
+                        stats![idx].OnPacket(s, ts, MonotonicClock.NowNs(), r.Buffer.Length);
                 }
                 : null,
             cancellationToken: ct).ConfigureAwait(false);
@@ -197,11 +203,9 @@ public static class UdpMeasurement
         var recvTasks = hostRecvs ? new Task[parms.Streams] : null;
         if (hostRecvs)
         {
-            stats ??= new UdpReceiverStats[parms.Streams];
             for (var i = 0; i < parms.Streams; i++)
             {
-                stats[i] ??= new UdpReceiverStats();
-                var s = stats[i]; var sock = hostSockets.Sockets[i];
+                var s = stats![i]; var sock = hostSockets.Sockets[i];
                 recvTasks![i] = RunOnDedicatedThread(
                     () => UdpReceiver.RunAsync(sock, s, recvCts.Token),
                     recvCts.Token);
@@ -223,7 +227,7 @@ public static class UdpMeasurement
         }
 
         // 3) Esperar test_end del cliente.
-        await router.AwaitTestEndAsync(120_000, ct).ConfigureAwait(false);
+        await router.AwaitTestEndAsync(TestLimits.TestEndTimeoutMs(parms), ct).ConfigureAwait(false);
 
         sendCts.Cancel();
         if (sendTasks is not null) { try { await Task.WhenAll(sendTasks).ConfigureAwait(false); } catch { } }
