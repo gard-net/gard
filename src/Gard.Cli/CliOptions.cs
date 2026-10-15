@@ -136,6 +136,8 @@ public static class CliOptions
             RequireRange(payload, UdpDataPlane.MinPayloadSize, UdpDataPlane.MaxPayloadSize, "--payload");
             if (direction == TestDirection.Bidir && bidirMode == BidirMode.Sequential)
                 throw new CliOptionException("UDP does not support --bidir-mode sequential; use simultaneous");
+            if (direction == TestDirection.Bidir && streams < 2)
+                throw new CliOptionException("UDP bidir needs --streams 2 or more (even streams carry down, odd streams up)");
         }
         else
         {

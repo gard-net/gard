@@ -19,11 +19,27 @@ en la spec (3002, 3003, 3004).
   (IPv6 por /64) y 30/min global, comparación en tiempo constante; saltarse el
   pairing ⇒ `error` 3002. El banner del host avisa cuando el pairing está
   apagado.
+- UDP bidir simultáneo según §12.6: streams pares down, impares up (antes
+  cada stream llevaba ambos sentidos y no interoperaba con la referencia).
+  Requiere `streams >= 2`; con 1 stream el host responde ack negativo y el CLI
+  lo rechaza antes.
+- Cliente UDP con IPv6: abre sockets de la familia del canal de control (antes
+  siempre IPv4) y reutiliza su IP ya resuelta, incluido el scope id link-local.
+- `HELLO_UDP` se reenvía con backoff (50/100/200/400 ms); un HELLO perdido ya
+  no hace fallar el test tras 15 s.
 - `IPairingValidator` recibe un `PairingPeer` (IP, nombre, plataforma) y
   devuelve `PairingVerdict`; `HostHandshake.AcceptAsync` acepta
   `remoteAddress`. Cambio de API en Gard.Core.
 
 ### Security
+- UDP host: el `HELLO_UDP` sólo se acepta desde la IP del canal de control y
+  los datos sólo desde la 5-tupla aprendida. Antes cualquiera que adivinara el
+  puerto efímero podía redirigir un stream sin ritmo hacia una víctima o
+  inflar los contadores.
+- Detección de duplicados UDP con ventana deslizante de 64K seqs (8 KiB por
+  stream) en vez de un `HashSet` sin límite que un emisor con seqs únicos
+  podía inflar hasta agotar la RAM; avanzar la ventana cuesta por palabras,
+  no por seq, ante saltos hostiles.
 - `gard host` valida `test_start` antes de reservar recursos: `streams` 1..32,
   `duration_s` (0, 3600], `warmup_s` y `gap_s` [0, 60], `payload_size` TCP
   1..4 MiB y UDP 64..65507, enums definidos. Payload fuera de rango ⇒ `error`
@@ -35,6 +51,9 @@ en la spec (3002, 3003, 3004).
 - `gard host` acepta como máximo 4 sesiones simultáneas.
 
 ### Fixed
+- UDP: el jitter agregado promedia sólo streams que recibieron datos (en
+  bidir la mitad no recibe y lo diluía), y `per_stream_bps` del bidir suma
+  ambos sentidos por stream.
 - El host aborta la sesión cuando el cliente se desconecta, en vez de seguir
   enviando hasta `duration_s` (`ControlMessageRouter.Terminated`).
 - UDP host: un paquete de datos que llegaba antes de su `HELLO_UDP` causaba

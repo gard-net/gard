@@ -64,6 +64,9 @@ public static class TestStartValidator
                 return LandspeedException.UdpNotNegotiated();
             if (parms.Direction == TestDirection.Bidir && parms.BidirMode == BidirMode.Sequential)
                 return LandspeedException.TestRejected("UDP no soporta bidir secuencial");
+            if (parms.Direction == TestDirection.Bidir && parms.Streams < 2)
+                return LandspeedException.TestRejected(
+                    "UDP bidir requiere streams >= 2 (§12.6: streams pares down, impares up)");
             if (parms.PayloadSize is < UdpDataPlane.MinPayloadSize or > UdpDataPlane.MaxPayloadSize)
                 return LandspeedException.PayloadOutOfRange(
                     parms.PayloadSize, UdpDataPlane.MinPayloadSize, UdpDataPlane.MaxPayloadSize);

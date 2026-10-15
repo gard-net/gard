@@ -231,8 +231,14 @@ Important options:
 - `--bitrate BPS` for UDP, per stream (`200M`, `1.5G`, `500k`)
 - `--format human|json|csv`
 
-UDP supports bidirectional simultaneous mode. Sequential bidirectional mode is
-TCP-only.
+UDP supports bidirectional simultaneous mode with `--streams 2` or more: per
+LSP §12.6, even streams carry down and odd streams carry up, so `--streams 4`
+means two streams each way. Sequential bidirectional mode is TCP-only.
+
+The UDP host only accepts the `HELLO_UDP` and data from the IP of the control
+connection, and after `HELLO_UDP` only from the learned source port. The client
+resends `HELLO_UDP` a few times with backoff, so one lost datagram on Wi-Fi does
+not fail the test. IPv6 peers are supported.
 
 ### `gard watch`
 
@@ -390,8 +396,10 @@ Benchmarks require `iperf3`, `jq`, `awk` and `python3`.
   host limits listed under `gard host`. The CLI applies the same limits locally.
 - Windows UDP pacing is timer-sensitive. Gard raises timer resolution while
   running and releases it on shutdown.
-- Long high-rate UDP runs still use exact duplicate tracking in memory. A
-  bounded bitmap tracker is planned for longer soak testing.
+- UDP duplicate detection uses a fixed 64K-sequence sliding window (8 KiB per
+  stream), so long high-rate runs use constant memory. A packet arriving more
+  than 64K sequences late counts as reordered; a duplicate that late cannot be
+  detected.
 
 ## License
 

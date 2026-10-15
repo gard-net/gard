@@ -97,6 +97,17 @@ public class CliOptionsTests
     }
 
     [Fact]
+    public void ParseTest_UdpBidir_NeedsTwoStreams()
+    {
+        var ex = Assert.Throws<CliOptionException>(() =>
+            CliOptions.ParseTest(["10.0.0.7", "--transport", "udp", "--payload", "1200", "--direction", "bidir"]));
+        Assert.Contains("--streams 2", ex.Message);
+
+        var ok = CliOptions.ParseTest(["10.0.0.7", "--transport", "udp", "--payload", "1200", "--direction", "bidir", "--streams", "2"]);
+        Assert.Equal(2, ok.Parameters.Streams);
+    }
+
+    [Fact]
     public void ParseTest_RejectsOversizedUdpPayload()
     {
         var ex = Assert.Throws<CliOptionException>(() =>

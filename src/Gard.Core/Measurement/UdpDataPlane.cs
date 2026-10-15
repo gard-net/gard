@@ -83,11 +83,16 @@ public static class UdpDataPlane
     /// caller via <paramref name="onStrayData"/> para no perder payload si el
     /// cliente ya empezó a enviar (up/bidir). Timeout global en ms.
     /// </summary>
+    /// <param name="expectedPeer">IP del peer de control. Si se indica, paquetes de
+    /// cualquier otra IP se descartan: sin esto un tercero que adivinara el puerto
+    /// efímero podía mandar el HELLO y redirigir un stream UDP sin ritmo hacia
+    /// una víctima.</param>
     public static async Task<IPEndPoint[]> HostDrainHelloAsync(
         UdpHostSockets hostSockets,
         int timeoutMs,
         Action<int, UdpReceiveResult>? onStrayData,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IPAddress? expectedPeer = null)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeoutMs);
@@ -103,7 +108,11 @@ public static class UdpDataPlane
                 {
                     while (!timeoutCts.IsCancellationRequested)
                     {
-                        var r = await sock.ReceiveAsync(timeoutCts.Token).ConfigureAwait(false);
+                        UdpReceiveResult r;
+                        try { r = await sock.ReceiveAsync(timeoutCts.Token).ConfigureAwait(false); }
+                        catch (SocketException) { continue; } // ICMP espurio (ConnectionReset en Windows)
+                        if (expectedPeer is not null && !SameHost(r.RemoteEndPoint.Address, expectedPeer))
+                            continue;
                         if (TryParseHeader(r.Buffer, out var seq, out _, out _) && seq == 0)
                         {
                             endpoints[idx] = r.RemoteEndPoint;
@@ -130,21 +139,29 @@ public static class UdpDataPlane
     }
 
     /// <summary>Conecta N sockets UDP a los puertos del host y envía HELLO_UDP (seq=0).</summary>
+    /// <param name="remoteAddress">IP ya conectada del canal de control. Preferible a
+    /// resolver <paramref name="host"/> otra vez: es la misma familia (IPv4/IPv6) y
+    /// conserva el scope id de una IPv6 link-local.</param>
     public static async Task<UdpClientSockets> ClientConnectAsync(
-        string host, IReadOnlyList<int> ports, int streamsCount, CancellationToken cancellationToken = default)
+        string host, IReadOnlyList<int> ports, int streamsCount, CancellationToken cancellationToken = default,
+        IPAddress? remoteAddress = null)
     {
         if (ports.Count != streamsCount)
             throw new ArgumentException($"ports.Count ({ports.Count}) != streams ({streamsCount})");
 
+        var address = remoteAddress is not null
+            ? Normalize(remoteAddress)
+            : await ResolveAsync(host, cancellationToken).ConfigureAwait(false);
         var sockets = new UdpClient[ports.Count];
         try
         {
             for (var i = 0; i < ports.Count; i++)
             {
-                var sock = new UdpClient(AddressFamily.InterNetwork);
+                // Antes: siempre AddressFamily.InterNetwork ⇒ peers IPv6 fallaban.
+                var sock = new UdpClient(address.AddressFamily);
                 sock.Client.ReceiveBufferSize = RecvBufferBytes;
                 sock.Client.SendBufferSize = SendBufferBytes;
-                sock.Connect(host, ports[i]);
+                sock.Connect(new IPEndPoint(address, ports[i]));
                 sockets[i] = sock;
             }
             // HELLO_UDP (seq=0) por cada socket para abrir pinhole y enseñarle al
@@ -162,6 +179,45 @@ public static class UdpDataPlane
             foreach (var s in sockets) { try { s?.Dispose(); } catch { } }
             throw;
         }
+    }
+
+    /// <summary>Reenvíos del HELLO_UDP tras el inicial (ms desde el anterior).</summary>
+    public static readonly int[] HelloRetransmitDelaysMs = [50, 100, 200, 400];
+
+    /// <summary>
+    /// Reenvía HELLO_UDP en cada socket con backoff. UDP no tiene ack: un HELLO
+    /// perdido (normal en Wi-Fi) hacía fallar el test tras 15 s de espera en el
+    /// host. Los HELLO repetidos son inocuos: el receptor ignora seq=0.
+    /// </summary>
+    public static async Task RetransmitHelloAsync(UdpClientSockets client, CancellationToken cancellationToken)
+    {
+        var helloBuf = new byte[HeaderSize];
+        foreach (var delay in HelloRetransmitDelaysMs)
+        {
+            try { await Task.Delay(delay, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+            for (var i = 0; i < client.Sockets.Count; i++)
+            {
+                WriteHeader(helloBuf, seq: 0, tsNs: MonotonicClock.NowNs(), stream: (ushort)i);
+                try { client.Sockets[i].Client.Send(helloBuf, SocketFlags.None); }
+                catch (SocketException) { /* ICMP unreachable u otro: el próximo reintento decide */ }
+                catch (ObjectDisposedException) { return; }
+            }
+        }
+    }
+
+    /// <summary>Misma máquina ignorando la forma IPv4-mapped-IPv6 de los sockets dual-stack.</summary>
+    public static bool SameHost(IPAddress a, IPAddress b) => Normalize(a).Equals(Normalize(b));
+
+    private static IPAddress Normalize(IPAddress a) => a.IsIPv4MappedToIPv6 ? a.MapToIPv4() : a;
+
+    private static async Task<IPAddress> ResolveAsync(string host, CancellationToken ct)
+    {
+        if (IPAddress.TryParse(host, out var literal)) return Normalize(literal);
+        var all = await Dns.GetHostAddressesAsync(host, ct).ConfigureAwait(false);
+        return all.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
+            ?? all.FirstOrDefault()
+            ?? throw new SocketException((int)SocketError.HostNotFound);
     }
 }
 
@@ -201,9 +257,19 @@ public sealed class UdpClientSockets : IAsyncDisposable
 /// <summary>
 /// Estadísticas acumuladas por stream en el receptor UDP. Thread-safe no —
 /// cada stream tiene su instancia y es tocada por un único receive loop.
+///
+/// Duplicados: bitmap deslizante de <see cref="DuplicateWindow"/> seqs detrás
+/// del máximo visto (8 KiB fijos). Antes un <c>HashSet</c> de todos los seqs
+/// crecía sin límite y un emisor remoto con seqs únicos podía agotar la RAM.
+/// Un paquete más viejo que la ventana se cuenta como recibido y reordenado;
+/// si fuera un duplicado así de tardío no se detecta (subestima la pérdida en
+/// ese paquete, aceptable).
 /// </summary>
 public sealed class UdpReceiverStats
 {
+    public const int DuplicateWindow = 65_536;
+    private const int WordBits = 64;
+
     public ulong PacketsReceived { get; private set; }
     public ulong BytesReceived { get; private set; }
     public ulong MaxSeqSeen { get; private set; }
@@ -213,27 +279,36 @@ public sealed class UdpReceiverStats
     /// <summary>Jitter RFC 3550 (EMA de |D_i - D_{i-1}|) en nanosegundos.</summary>
     public double JitterNs { get; private set; }
 
-    // TODO (LSP/1.2): cambiar a bitmap deslizante de 4K entradas para acotar
-    // memoria cuando corren tests largos con tasas altas. Por ahora el tracking
-    // exacto de duplicados consume O(N) memoria proporcional a paquetes
-    // recibidos — aceptable para los duration ≤ 60s de la referencia.
-    private readonly HashSet<ulong> _seenSeqs = new();
+    // Bit (seq % DuplicateWindow) = seq visto, válido para (Max - Window, Max].
+    private readonly ulong[] _seen = new ulong[DuplicateWindow / WordBits];
     private long? _prevTransitNs;
 
     public void OnPacket(ulong seq, ulong sendTsNs, ulong recvTsNs, int byteCount)
     {
         if (seq == 0) return; // HELLO_UDP; no cuenta como dato.
 
-        if (!_seenSeqs.Add(seq))
+        if (seq > MaxSeqSeen)
+        {
+            AdvanceWindow(seq);
+            MaxSeqSeen = seq;
+            Mark(seq);
+        }
+        else if (MaxSeqSeen - seq >= DuplicateWindow)
+        {
+            ReorderCount++; // fuera de la ventana: tardío, no verificable como duplicado
+        }
+        else if (IsMarked(seq))
         {
             DuplicateCount++;
             return;
         }
+        else
+        {
+            Mark(seq);
+            ReorderCount++;
+        }
         PacketsReceived++;
         BytesReceived += (ulong)byteCount;
-
-        if (seq < MaxSeqSeen) ReorderCount++;
-        if (seq > MaxSeqSeen) MaxSeqSeen = seq;
 
         // RFC 3550 jitter: D = recv - send; J += (|D - prevD| - J) / 16
         var transit = (long)recvTsNs - (long)sendTsNs;
@@ -244,6 +319,37 @@ public sealed class UdpReceiverStats
         }
         _prevTransitNs = transit;
     }
+
+    /// <summary>
+    /// Limpia los bits de (Max, newMax) que pasan a ser parte de la ventana. Por
+    /// palabras de 64 bits: un emisor que salta seqs de a miles no puede forzar
+    /// miles de operaciones por paquete (cota: ~1K palabras).
+    /// </summary>
+    private void AdvanceWindow(ulong newMax)
+    {
+        var gap = newMax - MaxSeqSeen;
+        if (gap >= DuplicateWindow)
+        {
+            Array.Clear(_seen);
+            return;
+        }
+        var first = MaxSeqSeen + 1;
+        var count = gap - 1;
+        while (count > 0)
+        {
+            var bitInWord = (int)(first % WordBits);
+            var take = Math.Min(count, (ulong)(WordBits - bitInWord));
+            var mask = take == WordBits ? ulong.MaxValue : ((1UL << (int)take) - 1) << bitInWord;
+            _seen[Word(first)] &= ~mask;
+            first += take;
+            count -= take;
+        }
+    }
+
+    private void Mark(ulong seq) => _seen[Word(seq)] |= Bit(seq);
+    private bool IsMarked(ulong seq) => (_seen[Word(seq)] & Bit(seq)) != 0;
+    private static int Word(ulong seq) => (int)(seq % DuplicateWindow / WordBits);
+    private static ulong Bit(ulong seq) => 1UL << (int)(seq % WordBits);
 }
 
 /// <summary>
@@ -370,10 +476,14 @@ public sealed class UdpSender
 /// <summary>Bucle de recepción UDP; invoca OnPacket sobre el collector.</summary>
 public static class UdpReceiver
 {
+    /// <param name="expectedSource">Endpoint aprendido por HELLO_UDP. Si se indica,
+    /// datagramas de otro origen se descartan (sockets host no conectados: sin
+    /// filtro cualquiera podía inflar los contadores).</param>
     public static async Task RunAsync(
         UdpClient socket,
         UdpReceiverStats stats,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IPEndPoint? expectedSource = null)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -385,6 +495,8 @@ public static class UdpReceiver
             catch (OperationCanceledException) { return; }
             catch (SocketException) { continue; }
 
+            if (expectedSource is not null && !expectedSource.Equals(result.RemoteEndPoint))
+                continue;
             var recv = MonotonicClock.NowNs();
             var buf = result.Buffer;
             if (!UdpDataPlane.TryParseHeader(buf, out var seq, out var sendTs, out var stream))

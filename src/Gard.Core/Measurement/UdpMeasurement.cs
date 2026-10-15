@@ -23,6 +23,26 @@ namespace Gard.Core.Measurement;
 /// </summary>
 public static class UdpMeasurement
 {
+    /// <summary>
+    /// §12.6: en bidir simultáneo el stream <c>i</c> es down si es par y up si es
+    /// impar. En up/down todos los streams van en ese sentido. (Antes gard
+    /// mandaba ambos sentidos por cada stream y no interoperaba con la referencia.)
+    /// </summary>
+    public static bool StreamCarriesDown(TestDirection direction, int stream) => direction switch
+    {
+        TestDirection.Down => true,
+        TestDirection.Bidir => stream % 2 == 0,
+        _ => false,
+    };
+
+    /// <inheritdoc cref="StreamCarriesDown"/>
+    public static bool StreamCarriesUp(TestDirection direction, int stream) => direction switch
+    {
+        TestDirection.Up => true,
+        TestDirection.Bidir => stream % 2 == 1,
+        _ => false,
+    };
+
     public static async Task<TestResult> RunClientAsync(
         IFrameTransport controlConnection,
         ControlMessageRouter router,
@@ -41,38 +61,33 @@ public static class UdpMeasurement
                 "UDP no soporta bidir secuencial; usar --bidir-mode simultaneous");
         }
 
-        var doSend = parms.Direction is TestDirection.Up or TestDirection.Bidir;
-        var doRecv = parms.Direction is TestDirection.Down or TestDirection.Bidir;
-
         await using var clientSockets = await UdpDataPlane.ClientConnectAsync(
-            remoteHost, dataPorts, parms.Streams, ct).ConfigureAwait(false);
+            remoteHost, dataPorts, parms.Streams, ct,
+            remoteAddress: controlConnection.RemoteAddress).ConfigureAwait(false);
 
         using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var recvCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var helloTask = UdpDataPlane.RetransmitHelloAsync(clientSockets, sendCts.Token);
 
-        var senders = doSend ? new UdpSender[parms.Streams] : null;
-        var sendTasks = doSend ? new Task[parms.Streams] : null;
-        var recvStats = doRecv ? new UdpReceiverStats[parms.Streams] : null;
-        var recvTasks = doRecv ? new Task[parms.Streams] : null;
-
-        if (doSend)
+        // Por stream: el cliente envía en los streams "up" y recibe en los "down".
+        var senders = new UdpSender?[parms.Streams];
+        var recvStats = new UdpReceiverStats?[parms.Streams];
+        var sendTasks = new List<Task>();
+        var recvTasks = new List<Task>();
+        // target_bitrate_bps es per-stream (match ref. Swift landspeed).
+        var per = parms.TargetBitrateBps;
+        for (var i = 0; i < parms.Streams; i++)
         {
-            // target_bitrate_bps es per-stream (match ref. Swift landspeed).
-            var per = parms.TargetBitrateBps;
-            for (var i = 0; i < parms.Streams; i++)
+            var sock = clientSockets.Sockets[i];
+            if (StreamCarriesUp(parms.Direction, i))
             {
-                senders![i] = new UdpSender();
-                var s = senders[i]; var sock = clientSockets.Sockets[i]; var idx = (ushort)i;
-                sendTasks![i] = s.RunAsync(sock, idx, parms.PayloadSize, per, sendCts.Token);
+                var s = senders[i] = new UdpSender();
+                sendTasks.Add(s.RunAsync(sock, (ushort)i, parms.PayloadSize, per, sendCts.Token));
             }
-        }
-        if (doRecv)
-        {
-            for (var i = 0; i < parms.Streams; i++)
+            if (StreamCarriesDown(parms.Direction, i))
             {
-                recvStats![i] = new UdpReceiverStats();
-                var st = recvStats[i]; var sock = clientSockets.Sockets[i];
-                recvTasks![i] = UdpReceiver.RunAsync(sock, st, recvCts.Token);
+                var st = recvStats[i] = new UdpReceiverStats();
+                recvTasks.Add(UdpReceiver.RunAsync(sock, st, recvCts.Token));
             }
         }
 
@@ -82,7 +97,7 @@ public static class UdpMeasurement
             .ConfigureAwait(false);
 
         sendCts.Cancel();
-        if (sendTasks is not null) { try { await Task.WhenAll(sendTasks).ConfigureAwait(false); } catch { } }
+        try { await Task.WhenAll(sendTasks.Append(helloTask)).ConfigureAwait(false); } catch { }
 
         await controlConnection.SendControlAsync(
             new TestEndMessage(NextRandomId(), new TestEndBody()), ct).ConfigureAwait(false);
@@ -90,7 +105,7 @@ public static class UdpMeasurement
         // Grace para paquetes en vuelo antes de parar recv.
         try { await Task.Delay(300, ct).ConfigureAwait(false); } catch { }
         recvCts.Cancel();
-        if (recvTasks is not null) { try { await Task.WhenAll(recvTasks).ConfigureAwait(false); } catch { } }
+        try { await Task.WhenAll(recvTasks).ConfigureAwait(false); } catch { }
 
         // Reporte completo al host.
         var myReport = BuildPerStreamReport(parms.Streams, senders, recvStats);
@@ -156,11 +171,7 @@ public static class UdpMeasurement
                 "UDP no soporta bidir secuencial");
         }
 
-        // Host siempre envía si el cliente está en Down/Bidir. Host siempre
-        // recibe si el cliente está en Up/Bidir.
-        var hostSends = parms.Direction is TestDirection.Down or TestDirection.Bidir;
-        var hostRecvs = parms.Direction is TestDirection.Up or TestDirection.Bidir;
-
+        // El host envía en los streams "down" y recibe en los "up" (§12.6).
         var startedAt = DateTimeOffset.UtcNow;
         await using var hostSockets = UdpDataPlane.HostOpen(parms.Streams, IPAddress.IPv6Any);
 
@@ -174,20 +185,19 @@ public static class UdpMeasurement
         // 1) Recibir HELLO_UDP (seq=0) en cada socket → aprendemos endpoint cliente.
         // Los stats existen antes del drain: datos que llegan antes que su HELLO
         // (reordenado o HELLO perdido) se cuentan vía onStrayData.
-        var stats = hostRecvs
-            ? Enumerable.Range(0, parms.Streams).Select(_ => new UdpReceiverStats()).ToArray()
-            : null;
+        var stats = Enumerable.Range(0, parms.Streams)
+            .Select(i => StreamCarriesUp(parms.Direction, i) ? new UdpReceiverStats() : null)
+            .ToArray();
         var endpoints = await UdpDataPlane.HostDrainHelloAsync(
             hostSockets,
             timeoutMs: 15_000,
-            onStrayData: hostRecvs
-                ? (idx, r) =>
-                {
-                    if (UdpDataPlane.TryParseHeader(r.Buffer, out var s, out var ts, out _))
-                        stats![idx].OnPacket(s, ts, MonotonicClock.NowNs(), r.Buffer.Length);
-                }
-                : null,
-            cancellationToken: ct).ConfigureAwait(false);
+            onStrayData: (idx, r) =>
+            {
+                if (stats[idx] is { } st && UdpDataPlane.TryParseHeader(r.Buffer, out var s, out var ts, out _))
+                    st.OnPacket(s, ts, MonotonicClock.NowNs(), r.Buffer.Length);
+            },
+            cancellationToken: ct,
+            expectedPeer: controlConnection.RemoteAddress).ConfigureAwait(false);
 
         // 2) Arrancar senders y/o receivers. La ventana de medición va de acá
         // a test_end: excluye apertura de sockets, espera de HELLO, graces y
@@ -195,27 +205,25 @@ public static class UdpMeasurement
         var phaseStartNs = MonotonicClock.NowNs();
         using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var recvCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var senders = hostSends ? new UdpSender[parms.Streams] : null;
-        var sendTasks = hostSends ? new Task[parms.Streams] : null;
-        var recvTasks = hostRecvs ? new Task[parms.Streams] : null;
-        if (hostRecvs)
+        var senders = new UdpSender?[parms.Streams];
+        var sendTasks = new List<Task>();
+        var recvTasks = new List<Task>();
+        // target_bitrate_bps es per-stream (match ref. Swift landspeed).
+        var per = parms.TargetBitrateBps ?? 0UL;
+        for (var i = 0; i < parms.Streams; i++)
         {
-            for (var i = 0; i < parms.Streams; i++)
+            var sock = hostSockets.Sockets[i];
+            var ep = endpoints[i];
+            if (stats[i] is { } st)
             {
-                var s = stats![i]; var sock = hostSockets.Sockets[i];
-                recvTasks![i] = UdpReceiver.RunAsync(sock, s, recvCts.Token);
+                // Sólo datagramas de la 5-tupla aprendida: el socket host no está
+                // conectado y sin filtro un tercero podía inflar los contadores.
+                recvTasks.Add(UdpReceiver.RunAsync(sock, st, recvCts.Token, expectedSource: ep));
             }
-        }
-        if (hostSends)
-        {
-            // target_bitrate_bps es per-stream (match ref. Swift landspeed).
-            var per = parms.TargetBitrateBps ?? 0UL;
-            for (var i = 0; i < parms.Streams; i++)
+            if (StreamCarriesDown(parms.Direction, i))
             {
-                senders![i] = new UdpSender();
-                var s = senders[i]; var sock = hostSockets.Sockets[i];
-                var ep = endpoints[i]; var idx = (ushort)i;
-                sendTasks![i] = s.RunAsync(sock, ep, idx, parms.PayloadSize, per, sendCts.Token);
+                var s = senders[i] = new UdpSender();
+                sendTasks.Add(s.RunAsync(sock, ep, (ushort)i, parms.PayloadSize, per, sendCts.Token));
             }
         }
 
@@ -224,12 +232,12 @@ public static class UdpMeasurement
         var phaseDurS = Math.Max(0.001, (MonotonicClock.NowNs() - phaseStartNs) / 1_000_000_000.0);
 
         sendCts.Cancel();
-        if (sendTasks is not null) { try { await Task.WhenAll(sendTasks).ConfigureAwait(false); } catch { } }
+        try { await Task.WhenAll(sendTasks).ConfigureAwait(false); } catch { }
 
         // Grace para paquetes últimos.
         try { await Task.Delay(300, ct).ConfigureAwait(false); } catch { }
         recvCts.Cancel();
-        if (recvTasks is not null) { try { await Task.WhenAll(recvTasks).ConfigureAwait(false); } catch { } }
+        try { await Task.WhenAll(recvTasks).ConfigureAwait(false); } catch { }
 
         // 4) Reporte de stats al cliente.
         var myReport = BuildPerStreamReport(parms.Streams, senders, stats);
@@ -264,7 +272,8 @@ public static class UdpMeasurement
             case TestDirection.Bidir:
                 meanBps = upBps + downBps;
                 peakBps = Math.Max(upBps, downBps);
-                perStreamBps = perUp;
+                // Cada stream lleva un solo sentido (§12.6): su bps es up + down.
+                perStreamBps = perUp.Zip(perDown, (u, dn) => u + dn).ToArray();
                 thUp = new ThroughputBody { MeanBps = upBps, PeakBps = upBps, PerStreamBps = perUp };
                 thDown = new ThroughputBody { MeanBps = downBps, PeakBps = downBps, PerStreamBps = perDown };
                 break;
@@ -306,8 +315,8 @@ public static class UdpMeasurement
     private static async Task RunDurationWithProgressAsync(
         DateTimeOffset phaseStart,
         DateTimeOffset phaseEnd,
-        UdpSender[]? senders,
-        UdpReceiverStats[]? recvStats,
+        UdpSender?[] senders,
+        UdpReceiverStats?[] recvStats,
         Action<MeasurementProgress>? onProgress,
         CancellationToken ct)
     {
@@ -319,8 +328,8 @@ public static class UdpMeasurement
             catch (OperationCanceledException) { break; }
             var now = DateTimeOffset.UtcNow;
             ulong total = 0;
-            if (senders is not null) foreach (var s in senders) total += s.BytesSent;
-            if (recvStats is not null) foreach (var s in recvStats) total += s.BytesReceived;
+            foreach (var s in senders) total += s?.BytesSent ?? 0;
+            foreach (var s in recvStats) total += s?.BytesReceived ?? 0;
             var winBytes = total - lastBytes;
             var winS = Math.Max(0.001, (now - lastTick).TotalSeconds);
             var bps = (ulong)(winBytes * 8.0 / winS);
@@ -331,7 +340,7 @@ public static class UdpMeasurement
     }
 
     private static UdpStatsPerStream[] BuildPerStreamReport(
-        int streams, UdpSender[]? senders, UdpReceiverStats[]? recvStats)
+        int streams, UdpSender?[] senders, UdpReceiverStats?[] recvStats)
     {
         var arr = new UdpStatsPerStream[streams];
         for (var i = 0; i < streams; i++)
@@ -339,13 +348,13 @@ public static class UdpMeasurement
             arr[i] = new UdpStatsPerStream
             {
                 Stream = i,
-                PacketsSent = senders?[i].PacketsSent ?? 0,
-                BytesSent = senders?[i].BytesSent ?? 0,
-                PacketsReceived = recvStats?[i].PacketsReceived ?? 0,
-                BytesReceived = recvStats?[i].BytesReceived ?? 0,
-                ReorderCount = recvStats?[i].ReorderCount ?? 0,
-                DuplicateCount = recvStats?[i].DuplicateCount ?? 0,
-                JitterNs = recvStats?[i].JitterNs ?? 0,
+                PacketsSent = senders[i]?.PacketsSent ?? 0,
+                BytesSent = senders[i]?.BytesSent ?? 0,
+                PacketsReceived = recvStats[i]?.PacketsReceived ?? 0,
+                BytesReceived = recvStats[i]?.BytesReceived ?? 0,
+                ReorderCount = recvStats[i]?.ReorderCount ?? 0,
+                DuplicateCount = recvStats[i]?.DuplicateCount ?? 0,
+                JitterNs = recvStats[i]?.JitterNs ?? 0,
             };
         }
         return arr;
@@ -356,10 +365,16 @@ public static class UdpMeasurement
     private static DirAgg SumStreams(IReadOnlyList<UdpStatsPerStream>? r)
     {
         if (r is null) return new DirAgg(0, 0, 0, 0, 0, 0);
-        ulong s = 0, rec = 0, b = 0, ro = 0, d = 0; double j = 0;
-        foreach (var p in r) { s += p.PacketsSent; rec += p.PacketsReceived; b += p.BytesReceived;
-            ro += p.ReorderCount; d += p.DuplicateCount; j += p.JitterNs; }
-        return new DirAgg(s, rec, b, ro, d, r.Count == 0 ? 0 : j / r.Count);
+        ulong s = 0, rec = 0, b = 0, ro = 0, d = 0; double j = 0; var receiving = 0;
+        foreach (var p in r)
+        {
+            s += p.PacketsSent; rec += p.PacketsReceived; b += p.BytesReceived;
+            ro += p.ReorderCount; d += p.DuplicateCount;
+            // Jitter promedio sólo de streams que recibieron: en bidir (§12.6) la
+            // mitad no recibe nada y diluía el valor a la mitad.
+            if (p.PacketsReceived > 0) { j += p.JitterNs; receiving++; }
+        }
+        return new DirAgg(s, rec, b, ro, d, receiving == 0 ? 0 : j / receiving);
     }
 
     private static (UdpStatsBody? up, UdpStatsBody? down, UdpStatsBody agg,

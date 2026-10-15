@@ -25,12 +25,14 @@ public sealed class TcpFrameTransport : IFrameTransport
 
     public string? RemoteEndpoint { get; }
     public string? LocalEndpoint { get; }
+    public IPAddress? RemoteAddress { get; }
 
     private TcpFrameTransport(Socket socket)
     {
         _socket = socket;
         _stream = new NetworkStream(socket, ownsSocket: false);
         RemoteEndpoint = socket.RemoteEndPoint?.ToString();
+        RemoteAddress = (socket.RemoteEndPoint as IPEndPoint)?.Address;
         LocalEndpoint = socket.LocalEndPoint?.ToString();
         _readerTask = Task.Run(() => ReadLoopAsync(_readerCts.Token));
     }

@@ -123,7 +123,8 @@ public static class CliHelp
           --payload BYTES  Payload size. TCP range: 512..4194304. UDP range: 64..65507.
           --transport T    tcp or udp. Default: tcp.
           --bitrate BPS    UDP target bitrate per stream, e.g. 200M or 1.5G.
-          --bidir-mode M   simultaneous or sequential. UDP supports simultaneous only.
+          --bidir-mode M   simultaneous or sequential. UDP supports simultaneous only,
+                           with 2+ streams: even streams carry down, odd streams up.
           --gap S          Gap between sequential bidirectional phases, max 60. Default: 0.5.
           --format F       human, json or csv. Default: human.
           --label ID       Label included in CSV output.

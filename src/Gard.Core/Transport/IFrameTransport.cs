@@ -28,6 +28,12 @@ public interface IFrameTransport : IAsyncDisposable
 
     /// <summary>Endpoint local (IP:puerto propio).</summary>
     string? LocalEndpoint { get; }
+
+    /// <summary>
+    /// IP del peer, si el transporte la conoce. El data plane UDP la usa para
+    /// filtrar HELLO/datos de terceros y para abrir sockets de la misma familia.
+    /// </summary>
+    System.Net.IPAddress? RemoteAddress => null;
 }
 
 /// <summary>
