@@ -55,6 +55,11 @@ catch (CliOptionException ex)
     Console.Error.WriteLine(CliErrors.HintFor(activeCommand));
     return CliErrors.UsageExitCode;
 }
+catch (LandspeedException ex) when (ex.Kind is LandspeedErrorKind.PairingRequired or LandspeedErrorKind.PairingInvalid)
+{
+    Console.Error.WriteLine($"gard: {CliErrors.PairingMessage(ex)}");
+    return CliErrors.RuntimeExitCode;
+}
 catch (Exception ex)
 {
     // Error de ejecución (conexión, timeout, protocolo): el uso era correcto,
@@ -158,7 +163,11 @@ static async Task<int> RunHostAsync(string[] a, CliTerminal term)
     await using var advertiser = new MdnsPeerAdvertiser(identity, port: actualPort);
     await advertiser.StartAsync();
 
-    PrintHostBanner(identity, actualPort, term);
+    // Sin pairing cualquier peer de la LAN puede pedir tests (spec §7).
+    CodePairingValidator? pairing = options.RequirePairing
+        ? new CodePairingValidator(options.PairCode ?? CodePairingValidator.GenerateCode())
+        : null;
+    PrintHostBanner(identity, actualPort, term, pairing);
 
     using var shutdownCts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, ev) => { ev.Cancel = true; shutdownCts.Cancel(); };
@@ -181,7 +190,7 @@ static async Task<int> RunHostAsync(string[] a, CliTerminal term)
         }
         _ = Task.Run(async () =>
         {
-            try { await HandleSessionAsync(ctl, identity, shutdownCts.Token); }
+            try { await HandleSessionAsync(ctl, identity, pairing, shutdownCts.Token); }
             finally { sessionSlots.Release(); }
         });
     }
@@ -218,7 +227,7 @@ static async Task<int> RunInfoAsync(string[] a, CliTerminal term)
     Console.Error.WriteLine($"Connecting to {options.Host}:{options.Port}...");
     await using var ctl = await TcpFrameTransport.ConnectAsync(options.Host, options.Port);
     var identity = ClientIdentity();
-    var hs = await ClientHandshake.PerformAsync(ctl, identity);
+    var hs = await ClientHandshake.PerformAsync(ctl, identity, PairingCodeProvider(options.PairCode));
 
     var rows = new List<IReadOnlyList<string>>
     {
@@ -271,13 +280,16 @@ static async Task<int> RunWatchAsync(string[] a, CliTerminal term)
     var rows = new List<IReadOnlyList<string>>();
 
     var sampleTimeout = TimeSpan.FromSeconds(options.Test.Parameters.DurationS + options.Test.Parameters.WarmupS + 15);
+    // Un solo proveedor para todas las muestras: si hay que preguntar el código,
+    // se pregunta una vez y no en cada reconexión.
+    var pairingCode = PairingCodeProvider(options.Test.PairCode);
     while (!shutdownCts.IsCancellationRequested)
     {
         try
         {
             using var sampleCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownCts.Token);
             sampleCts.CancelAfter(sampleTimeout);
-            var result = await RunMeasurementAsync(options.Test, term, showProgress: false, sampleCts.Token);
+            var result = await RunMeasurementAsync(options.Test, term, showProgress: false, sampleCts.Token, pairingCode);
             rows.Add(WatchRow(term, result));
             if (rows.Count > 12) rows.RemoveAt(0);
             Console.Out.WriteLine(term.Rich ? CliTable.Render(term, columns, rows) : string.Join("  ", rows[^1]));
@@ -287,6 +299,11 @@ static async Task<int> RunWatchAsync(string[] a, CliTerminal term)
         {
             // Sólo venció el timeout de esta muestra: seguimos observando.
             Console.Error.WriteLine($"gard: watch sample timed out after {sampleTimeout.TotalSeconds:F0}s");
+        }
+        catch (LandspeedException ex) when (ex.Kind is LandspeedErrorKind.PairingRequired or LandspeedErrorKind.PairingInvalid)
+        {
+            // Reintentar con el mismo código sólo quemaría el rate limit del host.
+            throw;
         }
         catch (Exception ex)
         {
@@ -333,7 +350,8 @@ static async Task<TestResult> RunMeasurementAsync(
     TestCommandOptions options,
     CliTerminal term,
     bool showProgress,
-    CancellationToken ct = default)
+    CancellationToken ct = default,
+    Func<CancellationToken, Task<string>>? pairingCode = null)
 {
     var parameters = options.Parameters;
     using var timerRes = WindowsTimerResolution.RaiseToOneMs();
@@ -343,7 +361,8 @@ static async Task<TestResult> RunMeasurementAsync(
     if (showProgress) Console.Error.WriteLine($"{term.Green("[+]")} Control channel ready.");
 
     var identity = ClientIdentity();
-    var hs = await ClientHandshake.PerformAsync(ctl, identity, cancellationToken: ct);
+    var hs = await ClientHandshake.PerformAsync(
+        ctl, identity, pairingCode ?? PairingCodeProvider(options.PairCode), cancellationToken: ct);
     if (showProgress) Console.Error.WriteLine($"{term.Green("[+]")} Negotiated LSP/{hs.PeerVersion}. session={Short(hs.SessionId)} caps={hs.NegotiatedCaps.ToHexString()}");
 
     await using var router = new ControlMessageRouter(new ControlStream(ctl, ct));
@@ -369,7 +388,7 @@ static async Task<TestResult> RunMeasurementAsync(
 static void PrintTestJson(TestResult r)
     => Console.Out.WriteLine(JsonSerializer.Serialize(r, CliJsonContext.Default.TestResult));
 
-static void PrintHostBanner(DeviceIdentity id, int port, CliTerminal term)
+static void PrintHostBanner(DeviceIdentity id, int port, CliTerminal term, CodePairingValidator? pairing)
 {
     if (term.Rich)
     {
@@ -384,6 +403,9 @@ static void PrintHostBanner(DeviceIdentity id, int port, CliTerminal term)
     Println($" platform   {id.Platform.ToString().ToLowerInvariant()} ({RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()})");
     Println($" service    _landspeed._tcp (mDNS)");
     Println($" tcp port   {port}");
+    Println(pairing is null
+        ? $" pairing    {term.Yellow("off")} (any LAN peer can run tests; use --pair)"
+        : $" pairing    required, code {term.Bold(pairing.Code)}");
     var ips = LocalIPv4();
     if (ips.Count == 0) Println(" interfaces none detected");
     else
@@ -396,7 +418,7 @@ static void PrintHostBanner(DeviceIdentity id, int port, CliTerminal term)
     Println("");
 }
 
-static async Task HandleSessionAsync(Socket socket, DeviceIdentity identity, CancellationToken ct)
+static async Task HandleSessionAsync(Socket socket, DeviceIdentity identity, IPairingValidator? pairing, CancellationToken ct)
 {
     var connId = ShortId();
     var remote = socket.RemoteEndPoint?.ToString() ?? "?";
@@ -405,7 +427,9 @@ static async Task HandleSessionAsync(Socket socket, DeviceIdentity identity, Can
     await using var transport = TcpFrameTransport.FromAccepted(socket);
     try
     {
-        var hs = await HostHandshake.AcceptAsync(transport, identity, cancellationToken: ct);
+        var hs = await HostHandshake.AcceptAsync(
+            transport, identity, pairing: pairing, cancellationToken: ct,
+            remoteAddress: (socket.RemoteEndPoint as IPEndPoint)?.Address);
         var sess = Short(hs.SessionId);
         LogEvent(connId, " ",
             $"handshake ok   session={sess} lsp={hs.PeerVersion.Major}.{hs.PeerVersion.Minor} " +
@@ -421,6 +445,11 @@ static async Task HandleSessionAsync(Socket socket, DeviceIdentity identity, Can
 
         PrintHostTestSummary(connId, result);
         LogEvent(connId, "ok", $"closed session={sess}");
+    }
+    catch (LandspeedException ex) when (ex.Kind is LandspeedErrorKind.PairingInvalid
+        or LandspeedErrorKind.PairingRequired or LandspeedErrorKind.PairingRateLimited)
+    {
+        LogEvent(connId, "!!", $"pairing rejected from {remote}: {ex.Message}");
     }
     catch (LandspeedException ex) when (ex.Kind == LandspeedErrorKind.PeerClosedWithoutTest)
     {
@@ -475,6 +504,25 @@ static void LogEvent(string connId, string arrow, string msg)
     Console.Out.Flush();
 }
 static void Println(string s) { Console.Out.WriteLine(s); Console.Out.Flush(); }
+
+// Código fijo si vino por --pair-code; si no, se pide por terminal (una vez) sólo
+// cuando el host lo exige y hay TTY. Sin TTY ⇒ null y el handshake falla con
+// PairingRequired, que el CLI traduce a un mensaje con la opción a usar.
+static Func<CancellationToken, Task<string>>? PairingCodeProvider(string? code)
+{
+    if (code is not null) return _ => Task.FromResult(code);
+    if (Console.IsInputRedirected) return null;
+    string? cached = null;
+    return _ =>
+    {
+        if (cached is null)
+        {
+            Console.Error.Write("Host requires pairing. Enter the 6-digit code shown by the host: ");
+            cached = Console.ReadLine()?.Trim() ?? "";
+        }
+        return Task.FromResult(cached);
+    };
+}
 
 static DeviceIdentity ClientIdentity() => new()
 {

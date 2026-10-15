@@ -178,16 +178,33 @@ Scans `_landspeed._tcp` over mDNS and prints active peers.
 ```sh
 gard host --name lab-mac --port 7737
 gard host --dynamic-port
+gard host --pair                 # require a 6-digit code, shown in the banner
+gard host --pair-code 482913     # require a fixed code
 ```
 
 Starts a host and prints its platform, service name, TCP control port and local
 interfaces. Stop with `Ctrl+C`.
 
-LSP pairing is not enforced yet, so any peer on the LAN can request a test. The
-host therefore bounds what a peer can ask for:
+Without `--pair` any peer on the LAN can request a test. With `--pair` the host
+requires the LSP pairing code (spec §7) on every session. Clients pass it with
+`--pair-code`, or are prompted once when running on a terminal:
+
+```sh
+gard test 192.168.1.50 --pair-code 482913
+gard info 192.168.1.50 --pair-code 482913
+```
+
+Wrong codes are rate limited to 5 failures per minute per source (IPv6 grouped
+by /64) plus 30 per minute overall, and codes are compared in constant time.
+Gard does not remember paired peers: LSP/1 has no stable peer identity
+(`device_name` and IP can be spoofed), so a remembered pairing could not be
+verified.
+
+Either way, the host bounds what a peer can ask for:
 
 - At most 4 concurrent sessions; extra connections are closed on accept.
-- The handshake must complete within 10 s.
+- `hello` must arrive within 10 s, and the whole handshake must finish within
+  10 s (2 min with pairing, to leave time to type the code).
 - `test_start` is validated before any socket is opened: `streams` 1..32,
   `duration_s` up to 3600, `warmup_s`/`gap_s` up to 60, TCP payload up to 4 MiB,
   UDP payload 64..65507. Out-of-range payloads get LSP error `3004`; UDP without
@@ -367,6 +384,8 @@ Benchmarks require `iperf3`, `jq`, `awk` and `python3`.
 - `test` cannot connect: open the host TCP control port in the firewall.
 - UDP results are zero or lossy: ensure local firewalls allow the ephemeral UDP
   data ports opened after the TCP handshake.
+- `host requires pairing`: the host was started with `--pair`; pass the code
+  from its banner with `--pair-code`. `too many failed attempts`: wait a minute.
 - `host rechazó test_start` / `code=3004`: the requested parameters exceed the
   host limits listed under `gard host`. The CLI applies the same limits locally.
 - Windows UDP pacing is timer-sensitive. Gard raises timer resolution while

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Net;
 using System.Security.Cryptography;
 using Gard.Core.Discovery;
 using Gard.Core.Protocol;
@@ -18,7 +20,8 @@ public static class ClientHandshake
     /// <param name="timeout">Plazo total del handshake (incluye
     /// <paramref name="providePairingCode"/>). <c>null</c> ⇒
     /// <see cref="HandshakeTimeouts.Default"/>, o <see cref="HandshakeTimeouts.WithPairing"/>
-    /// si hay proveedor de pairing. Vencido ⇒ <c>LandspeedException.Timeout</c>.</param>
+    /// si hay proveedor de pairing. El <c>hello_ack</c> debe llegar igual dentro de
+    /// <see cref="HandshakeTimeouts.Default"/>. Vencido ⇒ <c>LandspeedException.Timeout</c>.</param>
     public static Task<HandshakeOutcome> PerformAsync(
         IFrameTransport transport,
         DeviceIdentity identity,
@@ -28,13 +31,14 @@ public static class ClientHandshake
     {
         var limit = timeout ?? (providePairingCode is null ? HandshakeTimeouts.Default : HandshakeTimeouts.WithPairing);
         return HandshakeTimeouts.RunAsync(limit, cancellationToken,
-            ct => PerformCoreAsync(transport, identity, providePairingCode, ct));
+            (ct, helloDone) => PerformCoreAsync(transport, identity, providePairingCode, helloDone, ct));
     }
 
     private static async Task<HandshakeOutcome> PerformCoreAsync(
         IFrameTransport transport,
         DeviceIdentity identity,
         Func<CancellationToken, Task<string>>? providePairingCode,
+        Action helloDone,
         CancellationToken cancellationToken)
     {
         await using var stream = new ControlStream(transport, cancellationToken);
@@ -53,6 +57,7 @@ public static class ClientHandshake
 
         var (_, ack) = await stream.ExpectAsync<HelloAckBody>(msg =>
             msg is HelloAckMessage h ? (h.Id, h.Body) : null).ConfigureAwait(false);
+        helloDone();
 
         if (!ack.ProtocolVersion.IsCompatibleWith(ProtocolVersion.Current))
         {
@@ -77,7 +82,7 @@ public static class ClientHandshake
                 msg is PairAckMessage p ? (p.Id, p.Body) : null).ConfigureAwait(false);
             if (!pairAck.Ok)
             {
-                throw LandspeedException.PairingInvalid();
+                throw LandspeedException.PairingInvalid(pairAck.Reason);
             }
         }
 
@@ -134,20 +139,23 @@ public static class HostHandshake
     /// <param name="timeout">Plazo total para completar el handshake. Sin él, un
     /// peer que conecta y no envía <c>hello</c> retiene la sesión indefinidamente.
     /// <c>null</c> ⇒ <see cref="HandshakeTimeouts.Default"/>, o
-    /// <see cref="HandshakeTimeouts.WithPairing"/> si el validador exige pairing.</param>
+    /// <see cref="HandshakeTimeouts.WithPairing"/> si hay un validador de pairing.
+    /// El <c>hello</c> debe llegar igual dentro de <see cref="HandshakeTimeouts.Default"/>.</param>
+    /// <param name="remoteAddress">IP del peer, para el rate limit del pairing (§7).</param>
     public static Task<HandshakeOutcome> AcceptAsync(
         IFrameTransport transport,
         DeviceIdentity identity,
         string? sessionId = null,
         IPairingValidator? pairing = null,
         CancellationToken cancellationToken = default,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        IPAddress? remoteAddress = null)
     {
         pairing ??= new AlwaysAcceptPairing();
         sessionId ??= Guid.NewGuid().ToString();
-        var limit = timeout ?? (pairing.RequiresPairing() ? HandshakeTimeouts.WithPairing : HandshakeTimeouts.Default);
+        var limit = timeout ?? (pairing is AlwaysAcceptPairing ? HandshakeTimeouts.Default : HandshakeTimeouts.WithPairing);
         return HandshakeTimeouts.RunAsync(limit, cancellationToken,
-            ct => AcceptCoreAsync(transport, identity, sessionId, pairing, ct));
+            (ct, helloDone) => AcceptCoreAsync(transport, identity, sessionId, pairing, remoteAddress, helloDone, ct));
     }
 
     private static async Task<HandshakeOutcome> AcceptCoreAsync(
@@ -155,6 +163,8 @@ public static class HostHandshake
         DeviceIdentity identity,
         string sessionId,
         IPairingValidator pairing,
+        IPAddress? remoteAddress,
+        Action helloDone,
         CancellationToken cancellationToken)
     {
         await using var stream = new ControlStream(transport, cancellationToken);
@@ -162,6 +172,7 @@ public static class HostHandshake
         // --- hello ---
         var (helloId, hello) = await stream.ExpectAsync<HelloBody>(msg =>
             msg is HelloMessage h ? (h.Id, h.Body) : null).ConfigureAwait(false);
+        helloDone();
 
         if (!hello.ProtocolVersion.IsCompatibleWith(ProtocolVersion.Current))
         {
@@ -171,7 +182,8 @@ public static class HostHandshake
         }
 
         var negotiated = identity.Caps.Intersection(hello.Caps);
-        var requires = pairing.RequiresPairing();
+        var peer = new PairingPeer(remoteAddress, hello.DeviceName, hello.Platform);
+        var requires = pairing.RequiresPairing(peer);
 
         await transport.SendControlAsync(new HelloAckMessage(helloId, new HelloAckBody
         {
@@ -186,15 +198,42 @@ public static class HostHandshake
         // --- pair_request (si aplica) ---
         if (requires)
         {
-            var (pairId, pairReq) = await stream.ExpectAsync<PairRequestBody>(msg =>
-                msg is PairRequestMessage p ? (p.Id, p.Body) : null).ConfigureAwait(false);
-            var ok = pairing.Validate(pairReq.PairingCode);
-            await transport.SendControlAsync(new PairAckMessage(pairId, new PairAckBody
+            ControlMessage next;
+            try
+            {
+                next = await stream.NextAsync().ConfigureAwait(false);
+            }
+            catch (LandspeedException ex) when (ex.Kind == LandspeedErrorKind.Transport)
+            {
+                // El cliente cerró en vez de mandar el código (p. ej. gard sin
+                // --pair-code y sin TTY): para el log del host es "pairing requerido".
+                throw LandspeedException.PairingRequired(ex);
+            }
+            if (next is not PairRequestMessage pairMsg)
+            {
+                // Saltarse el pairing (clock_sync, test_start…) ⇒ 3002 (§8).
+                var err = LandspeedException.PairingRequired();
+                await TrySendErrorAsync(transport, err, cancellationToken).ConfigureAwait(false);
+                throw err;
+            }
+            var verdict = pairing.Validate(peer, pairMsg.Body.PairingCode);
+            var ok = verdict == PairingVerdict.Accepted;
+            await transport.SendControlAsync(new PairAckMessage(pairMsg.Id, new PairAckBody
             {
                 Ok = ok,
-                Reason = ok ? null : "pairing_code inválido",
+                Reason = verdict switch
+                {
+                    PairingVerdict.InvalidCode => "pairing_code inválido",
+                    PairingVerdict.RateLimited => "demasiados intentos fallidos; reintenta en un minuto",
+                    _ => null,
+                },
             }), cancellationToken).ConfigureAwait(false);
-            if (!ok) throw LandspeedException.PairingInvalid();
+            if (!ok)
+            {
+                throw verdict == PairingVerdict.RateLimited
+                    ? LandspeedException.PairingRateLimited()
+                    : LandspeedException.PairingInvalid();
+            }
         }
 
         // --- clock_sync (si aplica) ---
@@ -243,14 +282,31 @@ public static class HandshakeTimeouts
     /// <summary>Con pairing hay un humano tipeando el código.</summary>
     public static readonly TimeSpan WithPairing = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// Corre el handshake con plazo total <paramref name="timeout"/>, pero hasta que
+    /// el body invoque <c>helloDone</c> rige <see cref="Default"/>: el plazo largo de
+    /// pairing (humano tipeando) no debe regalarle 2 minutos a un peer mudo.
+    /// </summary>
     internal static async Task<T> RunAsync<T>(
-        TimeSpan timeout, CancellationToken cancellationToken, Func<CancellationToken, Task<T>> body)
+        TimeSpan timeout, CancellationToken cancellationToken, Func<CancellationToken, Action, Task<T>> body)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(timeout);
+        var infinite = timeout == Timeout.InfiniteTimeSpan;
+        var firstStage = !infinite && timeout < Default ? timeout : Default;
+        cts.CancelAfter(firstStage);
+        var sw = Stopwatch.StartNew();
+
+        void HelloDone()
+        {
+            if (cts.IsCancellationRequested || (!infinite && timeout <= firstStage)) return;
+            if (infinite) { cts.CancelAfter(Timeout.InfiniteTimeSpan); return; }
+            var rest = timeout - sw.Elapsed;
+            cts.CancelAfter(rest > TimeSpan.Zero ? rest : TimeSpan.FromMilliseconds(1));
+        }
+
         try
         {
-            return await body(cts.Token).ConfigureAwait(false);
+            return await body(cts.Token, HelloDone).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not LandspeedException { Kind: LandspeedErrorKind.Timeout }
             && cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)

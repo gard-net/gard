@@ -8,8 +8,20 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
-Endurecimiento del host frente a peers hostiles o que desaparecen. LSP/1.2 sin
-cambios de forma wire; el host ahora emite códigos ya definidos en la spec.
+Pairing y endurecimiento del host frente a peers hostiles o que desaparecen.
+LSP/1.2 sin cambios de forma wire; el host ahora emite códigos ya definidos
+en la spec (3002, 3003, 3004).
+
+### Added
+- Pairing LSP (§7): `gard host --pair` genera un código de 6 dígitos (o
+  `--pair-code` fija uno) y lo exige en cada sesión. `gard test/info/watch
+  --pair-code`, o prompt único si hay TTY. Fallos limitados a 5/min por origen
+  (IPv6 por /64) y 30/min global, comparación en tiempo constante; saltarse el
+  pairing ⇒ `error` 3002. El banner del host avisa cuando el pairing está
+  apagado.
+- `IPairingValidator` recibe un `PairingPeer` (IP, nombre, plataforma) y
+  devuelve `PairingVerdict`; `HostHandshake.AcceptAsync` acepta
+  `remoteAddress`. Cambio de API en Gard.Core.
 
 ### Security
 - `gard host` valida `test_start` antes de reservar recursos: `streams` 1..32,

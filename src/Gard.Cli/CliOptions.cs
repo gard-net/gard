@@ -1,5 +1,6 @@
 using System.Globalization;
 using Gard.Core.Discovery;
+using Gard.Core.Handshake;
 using Gard.Core.Measurement;
 using Gard.Core.Models;
 using Gard.Core.Protocol;
@@ -8,9 +9,11 @@ namespace Gard.Cli;
 
 public sealed record ScanOptions(int Seconds);
 
-public sealed record HostOptions(string Name, int Port, bool DynamicPort);
+/// <param name="RequirePairing">Exigir código de 6 dígitos (spec §7).</param>
+/// <param name="PairCode">Código fijo (<c>--pair-code</c>); <c>null</c> ⇒ generar uno al arrancar.</param>
+public sealed record HostOptions(string Name, int Port, bool DynamicPort, bool RequirePairing = false, string? PairCode = null);
 
-public sealed record InfoOptions(string Host, int Port);
+public sealed record InfoOptions(string Host, int Port, string? PairCode = null);
 
 public sealed record WatchOptions(string Host, int Port, double IntervalS, TestCommandOptions Test);
 
@@ -21,6 +24,8 @@ public sealed record TestCommandOptions
     public required string Format { get; init; }
     public required string Label { get; init; }
     public required TestParameters Parameters { get; init; }
+    /// <summary>Código para hosts que exigen pairing; <c>null</c> ⇒ preguntar si hay TTY.</summary>
+    public string? PairCode { get; init; }
 }
 
 public sealed class CliOptionException(string message) : ArgumentException(message);
@@ -68,7 +73,9 @@ public static class CliOptions
         var dynamicPort = HasFlag(args, "--dynamic-port");
         var port = dynamicPort ? 0 : GetIntOpt(args, "--port", DiscoveryConstants.DefaultPort);
         if (!dynamicPort) RequirePort(port, "--port");
-        return new HostOptions(name, port, dynamicPort);
+        var pairCode = GetPairCode(args);
+        var requirePairing = pairCode is not null || HasFlag(args, "--pair");
+        return new HostOptions(name, port, dynamicPort, requirePairing, pairCode);
     }
 
     public static TestCommandOptions ParseTest(string[] args)
@@ -141,6 +148,7 @@ public static class CliOptions
             Port = port,
             Format = fmtStr,
             Label = label,
+            PairCode = GetPairCode(args),
             Parameters = new TestParameters
             {
                 Direction = direction,
@@ -164,7 +172,7 @@ public static class CliOptions
         if (string.IsNullOrWhiteSpace(host)) throw new CliOptionException("missing <host>");
         var port = GetIntOpt(args, "--port", DiscoveryConstants.DefaultPort);
         RequirePort(port, "--port");
-        return new InfoOptions(host, port);
+        return new InfoOptions(host, port, GetPairCode(args));
     }
 
     public static WatchOptions ParseWatch(string[] args)
@@ -180,6 +188,15 @@ public static class CliOptions
 
         var test = ParseTest(testArgs);
         return new WatchOptions(test.Host, test.Port, interval, test);
+    }
+
+    private static string? GetPairCode(string[] args)
+    {
+        var code = GetStringOpt(args, "--pair-code", "");
+        if (code.Length == 0) return null;
+        if (!CodePairingValidator.IsValidCode(code))
+            throw new CliOptionException($"--pair-code must be {CodePairingValidator.CodeLength} digits");
+        return code;
     }
 
     public static bool HasFlag(string[] args, string name)

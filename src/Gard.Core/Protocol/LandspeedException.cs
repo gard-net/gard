@@ -67,13 +67,20 @@ public sealed class LandspeedException : Exception
             $"Versión de protocolo incompatible (peer: {peerVersion}).",
             new Dictionary<string, object?> { ["peerVersion"] = peerVersion });
 
-    public static LandspeedException PairingInvalid() =>
-        new(LandspeedErrorKind.PairingInvalid, "Código de emparejamiento inválido.",
+    /// <param name="reason">Motivo del host (<c>pair_ack.reason</c>), si lo dio.</param>
+    public static LandspeedException PairingInvalid(string? reason = null) =>
+        new(LandspeedErrorKind.PairingInvalid,
+            reason is null ? "Código de emparejamiento inválido." : $"Código de emparejamiento rechazado: {reason}",
+            new Dictionary<string, object?> { ["reason"] = reason });
+
+    /// <summary>Lado host: demasiados intentos fallidos desde ese origen; el código no se evaluó.</summary>
+    public static LandspeedException PairingRateLimited() =>
+        new(LandspeedErrorKind.PairingRateLimited, "Demasiados intentos de pairing fallidos; se rechazó sin evaluar.",
             new Dictionary<string, object?>());
 
-    public static LandspeedException PairingRequired() =>
+    public static LandspeedException PairingRequired(Exception? inner = null) =>
         new(LandspeedErrorKind.PairingRequired, "Se requiere emparejamiento antes de esta operación.",
-            new Dictionary<string, object?>());
+            new Dictionary<string, object?>(), inner);
 
     public static LandspeedException UdpNotNegotiated() =>
         new(LandspeedErrorKind.UdpNotNegotiated,
@@ -134,4 +141,5 @@ public enum LandspeedErrorKind
     PayloadOutOfRange,
     TestRejected,
     PeerClosedWithoutTest,
+    PairingRateLimited,
 }

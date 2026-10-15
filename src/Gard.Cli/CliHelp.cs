@@ -81,7 +81,7 @@ public static class CliHelp
         {GardCliInfo.VersionString}
 
         Usage:
-          gard host [--name NAME] [--port N] [--dynamic-port]
+          gard host [--name NAME] [--port N] [--dynamic-port] [--pair | --pair-code CODE]
 
         Start a Gard host so other peers can measure against this machine.
 
@@ -89,6 +89,8 @@ public static class CliHelp
           --name NAME      Advertised device name. Default: local host name.
           --port N         TCP control port. Default: 7737.
           --dynamic-port   Ask the OS for an available port.
+          --pair           Require a 6-digit pairing code, generated and shown at start.
+          --pair-code CODE Require this 6-digit pairing code.
           --plain          Disable rich terminal layout.
           --no-color       Disable ANSI color.
           -h, --help       Show this help.
@@ -97,6 +99,7 @@ public static class CliHelp
           gard host
           gard host --name office-mac --port 7737
           gard host --dynamic-port
+          gard host --pair
         """;
 
     public static string Test() =>
@@ -124,6 +127,7 @@ public static class CliHelp
           --gap S          Gap between sequential bidirectional phases, max 60. Default: 0.5.
           --format F       human, json or csv. Default: human.
           --label ID       Label included in CSV output.
+          --pair-code CODE Pairing code for hosts started with --pair. Prompted if omitted on a TTY.
           --csv-header     Print the CSV header and exit.
           --plain          Disable rich terminal layout.
           --no-color       Disable ANSI color.
@@ -154,6 +158,7 @@ public static class CliHelp
           --duration S     Per-run duration. Default: 3.
           --streams N      Parallel streams. Default: 1.
           --transport T    tcp or udp. Default: tcp.
+          --pair-code CODE Pairing code for hosts started with --pair. Prompted once if omitted on a TTY.
           --plain          Disable rich terminal layout.
           --no-color       Disable ANSI color.
           -h, --help       Show this help.
@@ -168,14 +173,15 @@ public static class CliHelp
         {GardCliInfo.VersionString}
 
         Usage:
-          gard info --host <ip-or-name> [--port N]
-          gard info <ip-or-name> [--port N]
+          gard info --host <ip-or-name> [--port N] [--pair-code CODE]
+          gard info <ip-or-name> [--port N] [--pair-code CODE]
 
         Connect to a peer and show negotiated LSP capabilities.
 
         Options:
           --host HOST      Peer IP address or DNS name.
           --port N         TCP control port. Default: 7737.
+          --pair-code CODE Pairing code for hosts started with --pair. Prompted if omitted on a TTY.
           --plain          Disable rich terminal layout.
           --no-color       Disable ANSI color.
           -h, --help       Show this help.

@@ -134,6 +134,58 @@ public class CliOptionsTests
     }
 
     [Fact]
+    public void ParseHost_PairingIsOffByDefault()
+    {
+        var options = CliOptions.ParseHost([], "lab");
+        Assert.False(options.RequirePairing);
+        Assert.Null(options.PairCode);
+    }
+
+    [Fact]
+    public void ParseHost_PairFlag_RequiresGeneratedCode()
+    {
+        var options = CliOptions.ParseHost(["--pair"], "lab");
+        Assert.True(options.RequirePairing);
+        Assert.Null(options.PairCode);
+    }
+
+    [Fact]
+    public void ParseHost_PairCode_ImpliesPairing()
+    {
+        var options = CliOptions.ParseHost(["--pair-code", "012345"], "lab");
+        Assert.True(options.RequirePairing);
+        Assert.Equal("012345", options.PairCode);
+    }
+
+    [Theory]
+    [InlineData("12345")]
+    [InlineData("abcdef")]
+    [InlineData("1234567")]
+    public void PairCode_MustBeSixDigits(string code)
+    {
+        Assert.Throws<CliOptionException>(() => CliOptions.ParseHost(["--pair-code", code], "lab"));
+        Assert.Throws<CliOptionException>(() => CliOptions.ParseTest(["10.0.0.7", "--pair-code", code]));
+        Assert.Throws<CliOptionException>(() => CliOptions.ParseInfo(["10.0.0.7", "--pair-code", code]));
+    }
+
+    [Fact]
+    public void ParseTestInfoWatch_CarryPairCode()
+    {
+        Assert.Equal("654321", CliOptions.ParseTest(["10.0.0.7", "--pair-code", "654321"]).PairCode);
+        Assert.Equal("654321", CliOptions.ParseInfo(["10.0.0.7", "--pair-code", "654321"]).PairCode);
+        Assert.Equal("654321", CliOptions.ParseWatch(["10.0.0.7", "--pair-code", "654321"]).Test.PairCode);
+        Assert.Null(CliOptions.ParseTest(["10.0.0.7"]).PairCode);
+    }
+
+    [Fact]
+    public void PairingMessage_IsActionable()
+    {
+        Assert.Contains("--pair-code", CliErrors.PairingMessage(Gard.Core.Protocol.LandspeedException.PairingRequired()));
+        Assert.Contains("demasiados", CliErrors.PairingMessage(
+            Gard.Core.Protocol.LandspeedException.PairingInvalid("demasiados intentos fallidos")));
+    }
+
+    [Fact]
     public void ParseWatch_UsesShortMeasurementDefaults()
     {
         var options = CliOptions.ParseWatch(["192.168.1.50", "--interval", "2"]);
