@@ -63,9 +63,7 @@ public static class UdpMeasurement
             {
                 senders![i] = new UdpSender();
                 var s = senders[i]; var sock = clientSockets.Sockets[i]; var idx = (ushort)i;
-                sendTasks![i] = RunOnDedicatedThread(
-                    () => s.RunAsync(sock, idx, parms.PayloadSize, per, sendCts.Token),
-                    sendCts.Token);
+                sendTasks![i] = s.RunAsync(sock, idx, parms.PayloadSize, per, sendCts.Token);
             }
         }
         if (doRecv)
@@ -74,9 +72,7 @@ public static class UdpMeasurement
             {
                 recvStats![i] = new UdpReceiverStats();
                 var st = recvStats[i]; var sock = clientSockets.Sockets[i];
-                recvTasks![i] = RunOnDedicatedThread(
-                    () => UdpReceiver.RunAsync(sock, st, recvCts.Token),
-                    recvCts.Token);
+                recvTasks![i] = UdpReceiver.RunAsync(sock, st, recvCts.Token);
             }
         }
 
@@ -95,8 +91,6 @@ public static class UdpMeasurement
         try { await Task.Delay(300, ct).ConfigureAwait(false); } catch { }
         recvCts.Cancel();
         if (recvTasks is not null) { try { await Task.WhenAll(recvTasks).ConfigureAwait(false); } catch { } }
-
-        var phaseDurS = Math.Max(0.001, (DateTimeOffset.UtcNow - phaseStart).TotalSeconds);
 
         // Reporte completo al host.
         var myReport = BuildPerStreamReport(parms.Streams, senders, recvStats);
@@ -195,7 +189,10 @@ public static class UdpMeasurement
                 : null,
             cancellationToken: ct).ConfigureAwait(false);
 
-        // 2) Arrancar senders y/o receivers.
+        // 2) Arrancar senders y/o receivers. La ventana de medición va de acá
+        // a test_end: excluye apertura de sockets, espera de HELLO, graces y
+        // el intercambio de udp_stats (antes inflaban la duración ~5-10 %).
+        var phaseStartNs = MonotonicClock.NowNs();
         using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         using var recvCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var senders = hostSends ? new UdpSender[parms.Streams] : null;
@@ -206,9 +203,7 @@ public static class UdpMeasurement
             for (var i = 0; i < parms.Streams; i++)
             {
                 var s = stats![i]; var sock = hostSockets.Sockets[i];
-                recvTasks![i] = RunOnDedicatedThread(
-                    () => UdpReceiver.RunAsync(sock, s, recvCts.Token),
-                    recvCts.Token);
+                recvTasks![i] = UdpReceiver.RunAsync(sock, s, recvCts.Token);
             }
         }
         if (hostSends)
@@ -220,14 +215,13 @@ public static class UdpMeasurement
                 senders![i] = new UdpSender();
                 var s = senders[i]; var sock = hostSockets.Sockets[i];
                 var ep = endpoints[i]; var idx = (ushort)i;
-                sendTasks![i] = RunOnDedicatedThread(
-                    () => s.RunAsync(sock, ep, idx, parms.PayloadSize, per, sendCts.Token),
-                    sendCts.Token);
+                sendTasks![i] = s.RunAsync(sock, ep, idx, parms.PayloadSize, per, sendCts.Token);
             }
         }
 
         // 3) Esperar test_end del cliente.
         await router.AwaitTestEndAsync(TestLimits.TestEndTimeoutMs(parms), ct).ConfigureAwait(false);
+        var phaseDurS = Math.Max(0.001, (MonotonicClock.NowNs() - phaseStartNs) / 1_000_000_000.0);
 
         sendCts.Cancel();
         if (sendTasks is not null) { try { await Task.WhenAll(sendTasks).ConfigureAwait(false); } catch { } }
@@ -250,11 +244,10 @@ public static class UdpMeasurement
         catch { /* seguimos sin */ }
 
         var endedAt = DateTimeOffset.UtcNow;
-        var durationS = Math.Max(0.001, (endedAt - startedAt).TotalSeconds);
 
         // 6) Agregar por dirección.
         var (upUdp, downUdp, aggUdp, upBps, downBps, perUp, perDown) = Aggregate(
-            parms, myReport, clientReport, durationS);
+            parms, myReport, clientReport, phaseDurS);
 
         // Throughput "headline" depende de la dirección.
         ulong meanBps, peakBps;
@@ -286,7 +279,7 @@ public static class UdpMeasurement
             EndedAt = endedAt,
             Direction = parms.Direction,
             Streams = parms.Streams,
-            DurationS = durationS,
+            DurationS = phaseDurS,
             Throughput = new ThroughputBody
             {
                 MeanBps = meanBps,
@@ -462,39 +455,4 @@ public static class UdpMeasurement
 
     private static ulong NextRandomId() =>
         (ulong)Random.Shared.NextInt64(1, long.MaxValue);
-
-    /// <summary>
-    /// Arranca el loop sender/receiver en un <c>Thread</c> dedicado (fuera del
-    /// ThreadPool). Con <c>streams &gt; 1</c>, varios <c>Task.Run</c> en el
-    /// ThreadPool se preemptaban mutuamente durante el busy-wait del pacer —
-    /// el throughput por stream caía a ~80 µs/pkt (12.5 kpps) cuando en solo
-    /// podía bajar a ~10 µs/pkt. Con un hilo dedicado por stream, cada uno
-    /// queda en su propio core y el sender puede mantener el target.
-    /// </summary>
-    private static Task RunOnDedicatedThread(Func<Task> work, CancellationToken ct)
-    {
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                work().GetAwaiter().GetResult();
-                tcs.TrySetResult();
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                tcs.TrySetCanceled(ct);
-            }
-            catch (Exception ex)
-            {
-                tcs.TrySetException(ex);
-            }
-        })
-        {
-            IsBackground = true,
-            Name = "gard-udp",
-        };
-        thread.Start();
-        return tcs.Task;
-    }
 }

@@ -42,6 +42,33 @@ public class RttUnderLoadTests
     }
 
     [Fact]
+    public void Builder_SpikeThreshold_UsesBaselineUnderBufferbloat()
+    {
+        // Baseline 10 ms, mediana inflada a 25 ms. Spec: spike si > 3 × baseline
+        // (30 ms) ⇒ los dos 40 ms cuentan. Con Max(baseline, median) el umbral
+        // era 75 ms y no se contaba ninguno.
+        var rtt = new[] { 10.0, 10, 10, 10, 25, 25, 25, 25, 25, 25, 40, 40 };
+        var stats = RttUnderLoadBuilder.FromRttMs(rtt);
+        Assert.Equal(10.0, stats.BaselineMedianMs, 9);
+        Assert.Equal(25.0, stats.MedianMs, 9);
+        Assert.Equal(2, stats.SpikesCount);
+    }
+
+    [Fact]
+    public void Collector_DropsSamplesWhileNotAccepting()
+    {
+        var c = new RttSampleCollector { Accepting = false };
+        c.Add(500); // warmup
+        c.Accepting = true;
+        c.Add(10);
+        c.Add(11);
+        c.Accepting = false;
+        c.Add(900); // gap
+        Assert.Equal(2, c.Count);
+        Assert.Equal(11.0, c.Snapshot().MaxMs);
+    }
+
+    [Fact]
     public void Collector_AccumulatesThreadSafe()
     {
         var collector = new RttSampleCollector();

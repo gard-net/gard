@@ -33,8 +33,10 @@ public static class RttUnderLoadBuilder
         for (var i = 0; i < quartile; i++) firstQuartile[i] = rttMs[i];
         var baseline = Statistics.Percentile(firstQuartile, 0.5);
 
-        // Spike: RTT > 3× baseline (o 3× median si baseline == 0).
-        var spikeThreshold = Math.Max(baseline, median) * 3.0;
+        // Spike: RTT > 3× baseline (spec §4); 3× median sólo si baseline == 0.
+        // Max(baseline, median) subcontaba spikes justo bajo bufferbloat,
+        // cuando la mediana ya está inflada respecto de la baseline.
+        var spikeThreshold = (baseline > 0 ? baseline : median) * 3.0;
         var spikes = 0;
         for (var i = 0; i < rttMs.Count; i++)
         {
@@ -64,9 +66,21 @@ public sealed class RttSampleCollector
 {
     private readonly object _gate = new();
     private readonly List<double> _samplesMs = new();
+    private volatile bool _accepting = true;
+
+    /// <summary>
+    /// Si es <c>false</c>, <see cref="Add"/> descarta muestras. El cliente lo
+    /// apaga durante warmup y gap: la baseline debe salir de muestras post-warmup.
+    /// </summary>
+    public bool Accepting
+    {
+        get => _accepting;
+        set => _accepting = value;
+    }
 
     public void Add(double rttMs)
     {
+        if (!_accepting) return;
         lock (_gate) _samplesMs.Add(rttMs);
     }
 

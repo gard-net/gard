@@ -117,4 +117,58 @@ public class TcpDataPlaneE2ETests
         Assert.Equal(2, result.PerStreamBps.Count);
         Assert.NotNull(result.Intervals);
     }
+
+    [Fact(Timeout = 20_000)]
+    public async Task LoopbackUdpDownTest_ReportsPhaseDurationAndPacedRate()
+    {
+        var (clientCtl, hostCtl) = await OpenControlPairAsync();
+        await using var clientCtlAsync = clientCtl;
+        await using var hostCtlAsync = hostCtl;
+        await using var clientRouter = new ControlMessageRouter(new ControlStream(clientCtl));
+        await using var hostRouter = new ControlMessageRouter(new ControlStream(hostCtl));
+        clientRouter.Start();
+        hostRouter.Start();
+
+        const ulong targetBps = 20_000_000;
+        var parms = new TestParameters
+        {
+            Direction = TestDirection.Down,
+            DurationS = 1.0,
+            Streams = 1,
+            PayloadSize = 1200,
+            WarmupS = 0.0,
+            Transport = TestTransport.Udp,
+            TargetBitrateBps = targetBps,
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var hostTask = MeasurementResponder.RunAsync(
+            hostCtl, hostRouter, new TcpDataPlane { BindAddress = IPAddress.Loopback },
+            sessionId: "s-udp", negotiatedCaps: Capabilities.DefaultV1,
+            cancellationToken: cts.Token);
+        var clientTask = MeasurementSession.RunClientAsync(
+            clientCtl, clientRouter, new TcpDataPlane { BindAddress = IPAddress.Loopback },
+            remoteHost: "127.0.0.1",
+            inputs: new MeasurementClientInputs
+            {
+                Parameters = parms,
+                PeerName = "host",
+                PeerPlatform = PeerPlatform.Linux,
+                SessionId = "s-udp",
+                NegotiatedCaps = Capabilities.DefaultV1,
+            },
+            onProgress: null,
+            cancellationToken: cts.Token);
+
+        await Task.WhenAll(hostTask, clientTask);
+        var result = await clientTask;
+        var hostBody = await hostTask;
+
+        // La duración es la ventana de medición, no test_start→result (que
+        // sumaba HELLO, graces y udp_stats: ~1.6 s para un test de 1 s).
+        Assert.InRange(hostBody.DurationS, 0.8, 1.4);
+        Assert.NotNull(result.Udp);
+        // Pacing por stream en loopback: tolerancia amplia para CI cargado.
+        Assert.InRange((double)result.MeanBps, targetBps * 0.6, targetBps * 1.2);
+    }
 }

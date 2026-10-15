@@ -120,7 +120,8 @@ public static class MeasurementSession
         var globalCounter = new ByteCounter();
 
         var echoEnabled = inputs.NegotiatedCaps.HasFlag(Capabilities.DataEcho);
-        var rttCollector = echoEnabled ? new RttSampleCollector() : null;
+        // Se habilita sólo dentro de cada ventana de medición (post-warmup).
+        var rttCollector = echoEnabled ? new RttSampleCollector { Accepting = false } : null;
         var intervalReportingEnabled = inputs.NegotiatedCaps.HasFlag(Capabilities.IntervalReporting);
 
         var sequentialBidir = parms.Direction == TestDirection.Bidir
@@ -186,6 +187,7 @@ public static class MeasurementSession
             }
 
             var samples = new List<IntervalSample>();
+            if (rttCollector is not null) rttCollector.Accepting = true;
             var phaseStart = MonotonicClock.NowNs();
             var phaseEnd = phaseStart + (ulong)(parms.DurationS * 1_000_000_000);
             ulong phasePeakBps = 0;
@@ -200,9 +202,10 @@ public static class MeasurementSession
                 {
                     var windowBytes = globalCounter.Drain();
                     measuredBytesTotal += windowBytes;
-                    var bps = windowBytes * 40;  // 200 ms * 40 = 8 s → bps (bits per second con ×8)... wait, mismo que Swift.
-                    // Swift: bps = windowBytes &* 40. Esto asume ventana fija de 200ms.
-                    //   windowBytes / 0.2 s = windowBytes * 5 bytes/s → × 8 bits = windowBytes * 40 bits/s. OK.
+                    // Ventana real, no 200 ms fijos (`bytes * 40` como Swift): un tick
+                    // atrasado por GC/scheduling inflaba el bps y sesgaba peak_bps.
+                    var elapsedNs = Math.Max(1UL, now - windowStart);
+                    var bps = (ulong)(windowBytes * 8.0 * 1_000_000_000.0 / elapsedNs);
                     if (bps > phasePeakBps) phasePeakBps = bps;
                     if (intervalReportingEnabled)
                     {
@@ -220,6 +223,7 @@ public static class MeasurementSession
                 }
             }
             measuredBytesTotal += globalCounter.Drain();
+            if (rttCollector is not null) rttCollector.Accepting = false;
 
             var phaseDurS = Math.Max(
                 (MonotonicClock.NowNs() - phaseStart) / 1_000_000_000.0, 0.001);

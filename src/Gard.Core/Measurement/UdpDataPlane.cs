@@ -252,7 +252,7 @@ public sealed class UdpReceiverStats
 /// Swift — no se divide por número de streams). <c>0</c> ⇒ sin límite.
 ///
 /// Pacing: deadline-based (<c>nextDueNs = start + seq × nsPerPacket</c>).
-/// Para huecos ≥ 2 ms usamos <see cref="Task.Delay"/>; por debajo, busy-wait
+/// Para huecos ≥ 2 ms dormimos el hilo; por debajo, busy-wait
 /// contra <see cref="MonotonicClock"/>. Motivo: <c>Task.Delay(1)</c> tiene
 /// granularidad ~15 ms en Windows por default, rompiendo el ritmo a altas
 /// tasas (≳ 100 pkt/ms). Si el envío se atrasa, no dormimos: intentamos
@@ -277,7 +277,23 @@ public sealed class UdpSender
     /// (cliente). Si no, se envía vía <c>SendAsync(buf, target)</c> (host
     /// enviando al endpoint aprendido por HELLO_UDP).
     /// </summary>
-    public async Task RunAsync(
+    public Task RunAsync(
+        UdpClient socket,
+        IPEndPoint? target,
+        ushort streamId,
+        int payloadSize,
+        ulong targetBitrateBps,
+        CancellationToken cancellationToken)
+        // LongRunning ⇒ hilo dedicado por stream. El pacer hace busy-wait: en el
+        // ThreadPool los senders se preemptaban entre sí y starveaban al router
+        // de control. (Antes un `await Task.Yield()` devolvía el loop al pool
+        // aunque el caller lo hubiera lanzado en un Thread propio.)
+        => Task.Factory.StartNew(
+            () => Run(socket, target, streamId, payloadSize, targetBitrateBps, cancellationToken),
+            cancellationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+    /// <summary>Loop sincrónico de envío; bloquea el hilo llamador hasta la cancelación.</summary>
+    public void Run(
         UdpClient socket,
         IPEndPoint? target,
         ushort streamId,
@@ -285,12 +301,6 @@ public sealed class UdpSender
         ulong targetBitrateBps,
         CancellationToken cancellationToken)
     {
-        // Nos salimos del thread del caller antes de hacer nada. Sin esto, si
-        // SendAsync completa sincrónicamente (loopback) el while se ejecuta
-        // sync en el caller y nunca le devolvemos control — el test queda
-        // colgado en sender.RunAsync antes de que Task.Delay(…) llegue a correr.
-        await Task.Yield();
-
         var buf = new byte[payloadSize];
         Random.Shared.NextBytes(buf); // padding pseudo-aleatorio, header se reescribe por paquete
 
@@ -314,8 +324,8 @@ public sealed class UdpSender
                     if (gapNs >= 2_000_000UL)
                     {
                         var sleepMs = (int)(gapNs / 1_000_000UL) - 1;
-                        try { await Task.Delay(sleepMs, cancellationToken).ConfigureAwait(false); }
-                        catch (OperationCanceledException) { return; }
+                        // WaitOne despierta antes si se cancela el test.
+                        if (cancellationToken.WaitHandle.WaitOne(sleepMs)) return;
                     }
                     // Busy-wait con Thread.SpinWait puro: no escala a Sleep
                     // (SpinWait.SpinOnce sí, y a 10 Mbps pega Sleep(1) que
@@ -341,16 +351,14 @@ public sealed class UdpSender
                 // Send SINCRÓNICO: cada `await socket.SendAsync(...)` costaba
                 // ~135 µs en loopback por el round-trip IOCP/ThreadPool — eso
                 // techaba el sender a ~7 kpkt/s (~54 Mbps). El send UDP real
-                // al kernel es microsegundos; hacerlo sync dentro del loop
-                // async (tras el Task.Yield inicial) mantiene el throughput
-                // sub-µs sin ceder el thread por paquete.
+                // al kernel es microsegundos.
                 if (target is null)
                     socket.Client.Send(buf, SocketFlags.None);
                 else
                     socket.Client.SendTo(buf, SocketFlags.None, target);
             }
-            catch (OperationCanceledException) { return; }
             catch (SocketException) { /* peer cerró; seguimos por si se recupera */ continue; }
+            catch (ObjectDisposedException) { return; }
 
             PacketsSent++;
             BytesSent += (ulong)payloadSize;

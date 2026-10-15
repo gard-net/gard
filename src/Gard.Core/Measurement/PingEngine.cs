@@ -87,8 +87,19 @@ public static class PingEngine
         var seq = startingSeq;
         while (!cancellationToken.IsCancellationRequested)
         {
-            var sample = await SinglePingAsync(connection, router, seq, timeoutMs, cancellationToken)
-                .ConfigureAwait(false);
+            PingSample sample;
+            try
+            {
+                sample = await SinglePingAsync(connection, router, seq, timeoutMs, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (cancellationToken.IsCancellationRequested
+                && ex is OperationCanceledException or LandspeedException { Kind: LandspeedErrorKind.Cancelled })
+            {
+                // El fin del test cortó un ping en vuelo: no es pérdida ni muestra.
+                // Antes la excepción descartaba TODAS las muestras del probe.
+                break;
+            }
             samples.Add(sample);
             seq = unchecked(seq + 1);
             try
