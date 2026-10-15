@@ -32,6 +32,9 @@ en la spec (3002, 3003, 3004).
   `remoteAddress`. Cambio de API en Gard.Core.
 
 ### Security
+- Data plane TCP: el host sólo acepta conexiones de datos desde la IP del
+  canal de control y cierra las demás. Antes la primera conexión a un puerto
+  efímero ganaba el stream, de quien fuera.
 - UDP host: el `HELLO_UDP` sólo se acepta desde la IP del canal de control y
   los datos sólo desde la 5-tupla aprendida. Antes cualquiera que adivinara el
   puerto efímero podía redirigir un stream sin ritmo hacia una víctima o
@@ -51,6 +54,9 @@ en la spec (3002, 3003, 3004).
 - `gard host` acepta como máximo 4 sesiones simultáneas.
 
 ### Fixed
+- Data plane TCP: si fallaba uno de los N accepts o connects, los sockets que
+  sí se habían conectado quedaban abiertos (fuga de fds en cada test fallido,
+  multiplicada por `watch`).
 - UDP: el jitter agregado promedia sólo streams que recibieron datos (en
   bidir la mitad no recibe y lo diluía), y `per_stream_bps` del bidir suma
   ambos sentidos por stream.

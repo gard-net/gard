@@ -20,12 +20,14 @@ public interface IDataPlane
     /// <summary>
     /// Lado host: espera a aceptar una conexión por listener. Cierra los
     /// listeners una vez aceptadas. Devuelve las conexiones en el mismo orden
-    /// de los puertos reportados por <see cref="HostOpenAsync"/>.
+    /// de los puertos reportados por <see cref="HostOpenAsync"/>. Si se indica
+    /// <paramref name="expectedPeer"/>, sólo acepta conexiones desde esa IP.
     /// </summary>
     Task<IReadOnlyList<IFrameTransport>> AcceptHostAsync(
         HostAcceptance acceptance,
         int timeoutMs = 10_000,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        System.Net.IPAddress? expectedPeer = null);
 
     /// <summary>
     /// Lado cliente: conecta <paramref name="ports"/>.Count sockets a

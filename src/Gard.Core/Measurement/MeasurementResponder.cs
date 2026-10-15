@@ -75,7 +75,8 @@ public static class MeasurementResponder
                 }),
                 ct).ConfigureAwait(false);
 
-            var dataConns = await dataPlane.AcceptHostAsync(acceptance, 15_000, ct).ConfigureAwait(false);
+            var dataConns = await dataPlane.AcceptHostAsync(
+                acceptance, 15_000, ct, expectedPeer: controlConnection.RemoteAddress).ConfigureAwait(false);
             try
             {
                 return await RunAfterDataPlaneReadyAsync(
