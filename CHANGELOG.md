@@ -8,11 +8,37 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
-Pairing y endurecimiento del host frente a peers hostiles o que desaparecen.
-LSP/1.2 sin cambios de forma wire; el host ahora emite códigos ya definidos
-en la spec (3002, 3003, 3004).
+## [0.3.0] — 2026-10-15
+
+CLI rediseñado, instalación con una línea (Homebrew, `curl | sh`, PowerShell),
+pairing y endurecimiento del host frente a peers hostiles o que desaparecen.
+LSP/1.2 sin cambios de forma wire: interopera con 0.2.x y la app Apple. El
+host ahora emite códigos ya definidos en la spec (3002, 3003, 3004).
+
+### Breaking
+- JSON: claves snake_case y campo `schema` versionado (`gard.test/1`,
+  `gard.scan/1`, `gard.info/1`, `gard.doctor/1`); antes se volcaba
+  `TestResult` en PascalCase sin versión. CSV sin cambios.
+- Opciones desconocidas son error (exit 2 con sugerencia) en vez de
+  ignorarse. `--dir` sigue aceptándose con aviso de deprecación.
+- `gard scan` dura 5 s por defecto (antes 10).
+- UDP bidir requiere `--streams 2` o más (§12.6).
+- API de Gard.Core: `IPairingValidator`, `IDataPlane.AcceptHostAsync` y
+  `HostHandshake.AcceptAsync` cambiaron de firma (parámetros opcionales nuevos).
 
 ### Added
+- Instalación: `brew install gard-net/gard/gard`,
+  `curl -fsSL …/scripts/install.sh | sh` (verifica SHA256, sin sudo) e
+  `irm …/scripts/install.ps1 | iex` (PATH de usuario). Release para
+  `linux-arm64` y `.deb` arm64; la fórmula del tap se actualiza sola al
+  publicar un release (`homebrew.yml`, secret `HOMEBREW_TAP_TOKEN`).
+- `gard completions bash|zsh|fish|powershell` (instaladas por Homebrew y el
+  `.deb`), `gard version`, `--json` en scan/info/doctor/watch, `watch --count`
+  y NDJSON, `--quiet`, `--ascii`.
+- Flags cortos estilo iperf3 (`-t -P -l -b -u -O -p -J`), sintaxis
+  `--opcion=valor` y sugerencias "did you mean".
+- Progreso en vivo en stderr (spinner, barra, throughput, sparkline) durante
+  test, watch y scan.
 - Pairing LSP (§7): `gard host --pair` genera un código de 6 dígitos (o
   `--pair-code` fija uno) y lo exige en cada sesión. `gard test/info/watch
   --pair-code`, o prompt único si hay TTY. Fallos limitados a 5/min por origen
@@ -93,6 +119,13 @@ en la spec (3002, 3003, 3004).
   silencio con exit 0 ante el timeout de una muestra.
 
 ### Changed
+- CLI reescrito en módulos (App/Commands/Ui/Output) con una spec única de la
+  que salen help, validación y completions. Renderer propio sin dependencias:
+  detecta ancho, Unicode (fallback ASCII), color (VT en Windows, NO_COLOR,
+  FORCE_COLOR, CI) y TTY. Dashboard con borde redondeado adaptable al ancho,
+  métricas coloreadas por umbral y sparkline real; tablas sin bordes; host con
+  log de eventos; doctor con capacidades del terminal; errores en inglés y
+  accionables; Ctrl+C ⇒ exit 130.
 - Exit codes: `2` para uso inválido, `1` para fallos de ejecución (antes `2`
   para todo, sugiriendo `--help` incluso ante un connection refused).
 - La versión vive sólo en `Directory.Build.props`; el binario la lee del

@@ -3,6 +3,6 @@
        workflow verifica que el tag vX.Y.Z coincida con este valor; el binario
        la lee del assembly (GardCliInfo), así que no hay otra copia que editar. -->
   <PropertyGroup>
-    <Version>0.2.6</Version>
+    <Version>0.3.0</Version>
   </PropertyGroup>
 </Project>

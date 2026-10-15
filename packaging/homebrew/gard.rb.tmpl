@@ -1,11 +1,12 @@
-# Homebrew formula template for gard.
+# Homebrew formula for gard — generated, do not edit in the tap.
 #
-# After a release is published, compute the sha256 of each tarball and
-# replace the __SHA256_*__ placeholders, then copy this file into the
-# gard-net/homebrew-gard tap repo as `Formula/gard.rb`.
+# Source of truth: packaging/homebrew/gard.rb.tmpl in gard-net/gard.
+# .github/workflows/homebrew.yml renders it from the release SHA256SUMS
+# (packaging/homebrew/render-formula.sh) and commits it to
+# gard-net/homebrew-gard as Formula/gard.rb when a release is published.
 
 class Gard < Formula
-  desc "SDK-free LAN quality measurement CLI (LSP/1.2)"
+  desc "LAN quality measurement CLI: throughput, latency, jitter and loss (LSP/1.2)"
   homepage "https://github.com/gard-net/gard"
   version "__VERSION__"
   license "Apache-2.0"
@@ -22,17 +23,34 @@ class Gard < Formula
   end
 
   on_linux do
-    url "https://github.com/gard-net/gard/releases/download/v#{version}/gard-v#{version}-linux-x64.tar.gz"
-    sha256 "__SHA256_LINUX_X64__"
+    on_arm do
+      url "https://github.com/gard-net/gard/releases/download/v#{version}/gard-v#{version}-linux-arm64.tar.gz"
+      sha256 "__SHA256_LINUX_ARM64__"
+    end
+    on_intel do
+      url "https://github.com/gard-net/gard/releases/download/v#{version}/gard-v#{version}-linux-x64.tar.gz"
+      sha256 "__SHA256_LINUX_X64__"
+    end
   end
 
   def install
     bin.install "gard"
+    generate_completions_from_executable(bin/"gard", "completions")
     doc.install "README.md", "LICENSE", "LICENSE-docs"
     (pkgshare/"docs").install Dir["docs/*"]
   end
 
+  def caveats
+    <<~EOS
+      Measure against another machine running `gard host`:
+        gard scan
+        gard test <address>
+    EOS
+  end
+
   test do
-    assert_match "gard", shell_output("#{bin}/gard --version")
+    assert_match "gard #{version}", shell_output("#{bin}/gard --version")
+    assert_match "\"schema\":\"gard.doctor/1\"", shell_output("#{bin}/gard doctor --json")
+    assert_match "complete -F _gard gard", shell_output("#{bin}/gard completions bash")
   end
 end

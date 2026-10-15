@@ -8,170 +8,139 @@ load. It is built for engineers who need more than a speed number and less than
 a lab full of custom tooling.
 
 Gard speaks the open **Landspeed Protocol (LSP/1.2)**, discovers peers over
-mDNS, supports TCP and UDP data planes, ships as SDK-free native/self-contained
-binaries, and emits clean human, JSON and CSV output.
+mDNS, supports TCP and UDP data planes, ships as a single native binary with no
+runtime to install, and emits clean human, JSON and CSV output.
 
 ```sh
-# Terminal A: listen on one machine
-gard host
-
-# Terminal B: measure from another machine
-gard test --host 192.168.1.50 --direction down --duration 10 --streams 4
+gard host                       # on one machine
+gard test 192.168.1.50          # on another
 ```
 
-> Status: `v0.2.6`, LSP/1.2. This release focuses on native distribution,
-> interactive pixel-art CLI polish and operational diagnostics. LSP wire
-> compatibility is unchanged.
+```text
+╭─ gard ─ 192.168.1.50 ─────────────────────────────────────── ✓ excellent ─╮
+│ down · tcp · 2 streams · 3.0s · LSP/1.2 · linux                            │
+│                                                                            │
+│ Throughput   11.47 Gb/s mean   12.46 Gb/s peak                             │
+│              ▅█▇▁▄▄▇▇▆██▇▅▅                                                │
+│                                                                            │
+│ Latency      0.22 min  1.56 avg  3.91 p95  9.04 max ms                     │
+│ Jitter       1.51 ms                                                       │
+│ Loss         0.00%  of 59 probes                                           │
+│ Under load   p95 12.96 ms · median 8.97 ms · 0 spikes                      │
+│                                                                            │
+│ ✓ Excellent · ready for demanding local workloads                          │
+╰────────────────────────────────────────────────────────────────────────────╯
+```
+
+> Status: `v0.3.0`, LSP/1.2. A redesigned CLI (live progress, adaptive
+> dashboard, completions, versioned JSON), pairing, and one-line installers.
+> LSP wire compatibility with 0.2.x and the Apple app is unchanged.
+
+## Install
+
+**macOS and Linux (Homebrew)**
+
+```sh
+brew install gard-net/gard/gard
+```
+
+**macOS and Linux (script)** — detects OS/arch, verifies the SHA256 and installs
+to `/usr/local/bin` if writable, otherwise `~/.local/bin` (never uses sudo):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gard-net/gard/main/scripts/install.sh | sh
+```
+
+**Windows (PowerShell)** — installs to `%LOCALAPPDATA%\Programs\gard` and adds it
+to your user PATH:
+
+```powershell
+irm https://raw.githubusercontent.com/gard-net/gard/main/scripts/install.ps1 | iex
+```
+
+Pin a version with `GARD_VERSION=0.3.0` (or `$env:GARD_VERSION`); choose the
+directory with `GARD_INSTALL_DIR`. Debian/Ubuntu `.deb` packages (amd64, arm64)
+and all archives are on the [releases page](https://github.com/gard-net/gard/releases).
+
+| Platform | Assets |
+| --- | --- |
+| macOS Apple Silicon / Intel | `osx-arm64.tar.gz`, `osx-x64.tar.gz` |
+| Linux x64 / arm64 | `linux-x64.tar.gz`, `linux-arm64.tar.gz`, `.deb` |
+| Windows x64 (and ARM via emulation) | `win-x64.zip` |
+
+Binaries are Native AOT when the platform supports it, otherwise self-contained;
+each archive has a `BUILD_KIND` file saying which. Every release ships a
+`SHA256SUMS` file.
+
+### Shell completions
+
+Homebrew and the `.deb` install them automatically. Otherwise:
+
+```sh
+gard completions bash > ~/.local/share/bash-completion/completions/gard
+gard completions zsh  > "${fpath[1]}/_gard"
+gard completions fish > ~/.config/fish/completions/gard.fish
+gard completions powershell | Out-String | Invoke-Expression   # add to $PROFILE
+```
 
 ## Why Gard
 
 `iperf3` is excellent at raw throughput. Gard is shaped around local devices and
-repeatable product-grade diagnostics:
+repeatable, product-grade diagnostics:
 
 - Discover peers on your LAN with no central service.
 - Measure throughput, latency, jitter, packet loss and RTT under load together.
 - Use TCP for baseline tests or UDP for paced, loss-aware measurements.
-- Run a polished interactive terminal UI, or force plain output for logs.
-- Script results as JSON or CSV without scraping terminal output.
+- Watch progress live, read a dashboard that fits your terminal, or force plain
+  output for logs.
+- Script results as versioned JSON or CSV without scraping terminal output.
 - Interoperate through the documented LSP/1.2 protocol.
-
-## Quick Start
-
-Install a release binary from:
-
-```text
-https://github.com/gard-net/gard/releases
-```
-
-Then run:
-
-```sh
-gard host --name office-mac
-```
-
-On another device:
-
-```sh
-gard scan --seconds 5
-gard test --host 192.168.1.50 --direction down --duration 10 --streams 4
-gard watch 192.168.1.50 --interval 5
-gard info 192.168.1.50
-gard doctor
-```
-
-For UDP:
-
-```sh
-gard test 192.168.1.50 \
-  --transport udp \
-  --direction up \
-  --payload 1200 \
-  --bitrate 200M
-```
-
-For automation:
-
-```sh
-gard test 192.168.1.50 --format json
-gard test 192.168.1.50 --format csv --label nightly-lab
-gard test --csv-header
-```
-
-## Install
-
-Release assets do not require a system .NET runtime or .NET SDK. Gard attempts
-Native AOT release binaries first; if a platform cannot publish AOT cleanly, the
-release workflow falls back to a self-contained single-file executable.
-
-You need the .NET SDK only when building Gard from source.
-
-| Platform | Asset |
-| --- | --- |
-| Linux x64 | `.tar.gz`, `.deb` |
-| macOS Apple Silicon | `osx-arm64.tar.gz` |
-| macOS Intel | `osx-x64.tar.gz` |
-| Windows x64 | `.zip` |
-
-Each release includes SHA256 checksums and a `BUILD_KIND` file in the archive
-that says `native-aot` or `self-contained`.
-
-## Build From Source
-
-Requirements:
-
-- .NET SDK 10.0.x
-- Git
-
-```sh
-git clone https://github.com/gard-net/gard.git
-cd gard
-dotnet restore gard.slnx
-dotnet build gard.slnx -c Release --no-restore
-dotnet run --project src/Gard.Cli -c Release -- --help
-```
-
-Publish a Native AOT binary:
-
-```sh
-dotnet publish src/Gard.Cli -c Release -r osx-arm64 \
-  -p:PublishAot=true \
-  -o ./out/osx-arm64-aot
-```
-
-Publish a self-contained fallback binary:
-
-```sh
-dotnet publish src/Gard.Cli -c Release -r osx-arm64 \
-  --self-contained true \
-  -p:PublishSingleFile=true \
-  -o ./out/osx-arm64
-```
-
-Common runtime IDs: `linux-x64`, `osx-arm64`, `osx-x64`, `win-x64`.
-See [docs/native-aot-notes.md](docs/native-aot-notes.md) for the current AOT
-audit and fallback policy.
 
 ## CLI
 
 ```text
 gard <command> [options]
 gard help <command>
-gard --version
 ```
 
-Commands:
+| Command | What it does |
+| --- | --- |
+| `gard scan` | Discover LSP peers on the LAN (mDNS). |
+| `gard host` | Listen for tests and advertise over mDNS. |
+| `gard test` | Measure a peer over TCP or UDP. |
+| `gard watch` | Repeated short measurements until Ctrl+C (or `--count`). |
+| `gard info` | Show a peer's protocol version and capabilities. |
+| `gard doctor` | Diagnose the local environment and terminal. |
+| `gard completions` | Print a bash, zsh, fish or PowerShell completion script. |
+| `gard version` | Show the gard and protocol versions. |
 
-- `gard scan`: discover LSP peers on the LAN.
-- `gard host`: listen for incoming tests and advertise over mDNS.
-- `gard test`: measure a peer over TCP or UDP.
-- `gard watch`: run repeated short measurements until `Ctrl+C`.
-- `gard info`: show peer protocol and negotiated capabilities.
-- `gard doctor`: diagnose local interfaces, install path and firewall hints.
+Options accept `--name value` or `--name=value`. Unknown options are an error
+with a suggestion (`did you mean '--duration'?`). Measurement flags have
+iperf3-style short forms:
 
-Help is available globally and per command:
+| Short | Long | Meaning |
+| --- | --- | --- |
+| `-t S` | `--duration S` | Measurement seconds (default 10). |
+| `-P N` | `--streams N` | Parallel streams, 1..32. |
+| `-l BYTES` | `--payload BYTES` | Payload size. |
+| `-b BPS` | `--bitrate BPS` | UDP target per stream (`200M`, `1.5G`). |
+| `-u` | `--udp` | Shortcut for `--transport udp`. |
+| `-O S` | `--warmup S` | Seconds excluded at the start. |
+| `-p N` | `--port N` | TCP control port (default 7737). |
+| `-J` | `--json` | JSON output. |
 
-```sh
-gard --help
-gard help scan
-gard help host
-gard help test
-gard help watch
-gard help info
-gard help doctor
-gard test --help
-```
-
-Human output uses a rich Unicode/ANSI terminal style when stdout is interactive.
-Use `--plain`, `--no-color` or `--style plain` for logs, narrow terminals or
-automation. JSON and CSV never include banners, ANSI color or progress text.
+Global options: `--plain` (plain lines), `--no-color` (also `NO_COLOR=1`),
+`--ascii` (no Unicode glyphs), `--style rich|plain`. Gard detects terminal width,
+Unicode support (UTF-8 locale; Windows consoles are switched to UTF-8), color
+support (VT sequences on Windows 10+, `TERM=dumb`, `CI`) and whether stdout is a
+TTY, and degrades gracefully. `FORCE_COLOR=1` keeps color when piping.
 
 ### `gard scan`
 
 ```sh
-gard scan --seconds 5
+gard scan            # 5 s
+gard scan -t 3 --json
 ```
-
-Scans `_landspeed._tcp` over mDNS and prints active peers.
 
 ### `gard host`
 
@@ -182,8 +151,8 @@ gard host --pair                 # require a 6-digit code, shown in the banner
 gard host --pair-code 482913     # require a fixed code
 ```
 
-Starts a host and prints its platform, service name, TCP control port and local
-interfaces. Stop with `Ctrl+C`.
+Prints its name, port, pairing state and LAN addresses (with a ready-to-copy
+`gard test` command), then one line per session. Stop with `Ctrl+C`.
 
 Without `--pair` any peer on the LAN can request a test. With `--pair` the host
 requires the LSP pairing code (spec §7) on every session. Clients pass it with
@@ -215,21 +184,15 @@ Either way, the host bounds what a peer can ask for:
 ### `gard test`
 
 ```sh
-gard test --host 192.168.1.50 --direction down --duration 10 --streams 4
-gard test 192.168.1.50 --transport udp --direction up --payload 1200 --bitrate 200M
-gard test 192.168.1.50 --direction bidir --bidir-mode simultaneous
+gard test 192.168.1.50
+gard test 192.168.1.50 -t 10 -P 4 --direction bidir
+gard test 192.168.1.50 -u -b 200M -l 1200 --direction up
+gard test 192.168.1.50 --json | jq .throughput.mean_bps
+gard test 192.168.1.50 --csv --label nightly
 ```
 
-Important options:
-
-- `--direction up|down|bidir`
-- `--streams N`
-- `--duration S`
-- `--warmup S`
-- `--payload BYTES`
-- `--transport tcp|udp`
-- `--bitrate BPS` for UDP, per stream (`200M`, `1.5G`, `500k`)
-- `--format human|json|csv`
+On a TTY, progress is drawn live on stderr and cleared when the result prints.
+`--quiet` disables it. Run `gard help test` for every option.
 
 UDP supports bidirectional simultaneous mode with `--streams 2` or more: per
 LSP §12.6, even streams carry down and odd streams carry up, so `--streams 4`
@@ -243,77 +206,45 @@ not fail the test. IPv6 peers are supported.
 ### `gard watch`
 
 ```sh
-gard watch 192.168.1.50 --interval 5
-gard watch --host 192.168.1.50 --direction down --duration 2
+gard watch 192.168.1.50                 # every 5 s, 3 s samples
+gard watch 192.168.1.50 -i 10 -n 6      # six samples, then exit
+gard watch 192.168.1.50 --json          # NDJSON, one test report per line
 ```
 
-Runs repeated short tests and prints a live table with throughput, latency, loss
-and quality. Stop with `Ctrl+C`.
+Prints one table row per sample. With `--count`, exits `1` if every sample failed.
 
-### `gard info`
+### `gard info` and `gard doctor`
 
 ```sh
-gard info 192.168.1.50
+gard info 192.168.1.50          # LSP version, capabilities, transports, clock RTT
+gard doctor                     # version, platform, binary, terminal, interfaces
+gard doctor --json
 ```
-
-Performs a control handshake and prints LSP version, negotiated capabilities and
-available transports.
-
-### `gard doctor`
-
-```sh
-gard doctor
-gard doctor --plain
-```
-
-Prints local OS, architecture, install path, network interfaces, mDNS service
-name and firewall hints.
 
 ## Output
 
-Human output is designed for terminals:
+- **human**: dashboard on a TTY (adapts to terminal width, falls back to ASCII);
+  stable `Key: value` lines when redirected or with `--plain`.
+- **JSON** (`--json`): snake_case and versioned with a `schema` field
+  (`gard.test/1`, `gard.scan/1`, `gard.info/1`, `gard.doctor/1`). Indented on a
+  TTY, compact when piped. New fields may be added; renames or removals bump the
+  schema version.
+- **CSV** (`--csv`, `--csv-header`): one row per test, stable columns.
 
-```text
-Gard test result
+Progress, warnings and errors always go to stderr; stdout carries only the result.
 
-Session:   ...
-Peer:      192.168.1.50 (macos)
-Protocol:  LSP/1.2
-Direction: down
-Streams:   4
-Duration:  10.00s
-
-Throughput
-  Mean:    943.20 Mb/s
-  Peak:    981.45 Mb/s
-
-Latency
-  Ping:    min 0.42 ms, avg 0.71 ms, p95 1.12 ms, max 3.11 ms
-  Jitter:  0.23 ms
-  Loss:    0.00% (234 samples)
+```json
+{
+  "schema": "gard.test/1",
+  "gard_version": "0.3.0",
+  "lsp_version": "1.2",
+  "peer": { "name": "192.168.1.50", "platform": "linux" },
+  "test": { "direction": "down", "transport": "tcp", "streams": 4, "duration_s": 10.0 },
+  "throughput": { "mean_bps": 943200000, "peak_bps": 981450000, "per_stream_bps": [] },
+  "latency": { "min_ms": 0.42, "avg_ms": 0.71, "p95_ms": 1.12, "max_ms": 3.11, "jitter_ms": 0.23, "loss_pct": 0.0, "samples": 234 },
+  "quality": "excellent"
+}
 ```
-
-Interactive terminals use the richer dashboard by default (loopback example,
-`--no-color`):
-
-```text
-╔══════════════════════════════════════════════════════════════════════════╗
-║ GARD LINK METER  ●  EXCELLENT                                            ║
-║ target 127.0.0.1   lsp/1.2   down   2 streams   2s                       ║
-║ ──────────────────────────────────────────────────────────────────────── ║
-║ THROUGHPUT  MEAN 10.80 Gb/s   PEAK 14.87 Gb/s                            ║
-║ ███████████████████████████████░░░░░░░░░░░  73%                          ║
-║ ──────────────────────────────────────────────────────────────────────── ║
-║ ┌─ LATENCY ██████████ p95 4.89 ms └  ┌─ JITTER █████████░ 1.61 ms └      ║
-║ ┌─ LOSS ██████████ 0.00% └  samples 49                                   ║
-║ ┌─ RTT UNDER LOAD █████████░ p95 21.57 ms · spikes 1 └                   ║
-║ ──────────────────────────────────────────────────────────────────────── ║
-║ VERDICT  ● excellent  · local link is excellent for demanding local wor… ║
-╚══════════════════════════════════════════════════════════════════════════╝
-```
-
-JSON and CSV are stable machine-readable modes. Progress logs go to stderr;
-the result stays on stdout.
 
 ### Exit codes
 
@@ -322,6 +253,27 @@ the result stays on stdout.
 | `0` | Success. |
 | `1` | Runtime failure: connection refused, timeout, peer rejected the test, protocol error. |
 | `2` | Usage error: unknown command, invalid or out-of-range option. |
+| `130` | Interrupted with Ctrl+C. |
+
+## Build From Source
+
+Requirements: .NET SDK 10.0.x and Git.
+
+```sh
+git clone https://github.com/gard-net/gard.git
+cd gard
+dotnet build gard.slnx -c Release
+dotnet run --project src/Gard.Cli -c Release -- --help
+```
+
+Native AOT binary (needs clang on Linux, Xcode on macOS):
+
+```sh
+dotnet publish src/Gard.Cli -c Release -r linux-x64 -p:PublishAot=true -o ./out
+```
+
+Common runtime IDs: `linux-x64`, `linux-arm64`, `osx-arm64`, `osx-x64`, `win-x64`.
+See [docs/native-aot-notes.md](docs/native-aot-notes.md).
 
 ## Protocol
 
@@ -343,33 +295,41 @@ for servers, headless machines, CI benches and interop testing.
 
 ## Repository Map
 
-- `src/Gard.Cli`: CLI entrypoint, help, parsing and output formatting.
+- `src/Gard.Cli/App`: entry point, command spec (help, validation and
+  completions all come from `CliSpec`), options and errors.
+- `src/Gard.Cli/Commands`: one file per command.
+- `src/Gard.Cli/Ui`: terminal capabilities, glyphs, tables, live progress.
+- `src/Gard.Cli/Output`: dashboard, JSON reports, CSV, quality grading.
 - `src/Gard.Core`: protocol, discovery, transport, persistence and measurement.
-- `src/Gard.Core.Tests`: unit, protocol and loopback tests.
-- `docs/`: protocol and benchmark documentation.
+- `src/Gard.Core.Tests`: unit, protocol, CLI and loopback end-to-end tests.
+- `scripts/install.sh`, `scripts/install.ps1`: one-line installers.
 - `scripts/bench/`: gard vs iperf3 benchmark runner.
-- `packaging/`: Debian and Homebrew templates.
+- `packaging/`: Debian control and Homebrew formula templates.
+- `docs/`: protocol and benchmark documentation.
 
 ## Development
 
-Run the local quality loop:
-
 ```sh
-dotnet restore gard.slnx
-dotnet build gard.slnx -c Release --no-restore
+dotnet build gard.slnx -c Release
 dotnet test gard.slnx -c Release --no-build
+dotnet run --project src/Gard.Cli -c Release -- doctor
 ```
 
-Smoke test the CLI:
+CI builds and tests on Ubuntu, macOS and Windows, publishes a Native AOT binary
+and smoke-tests it (including `scripts/install.sh` against a local mirror), and
+checks that the Homebrew formula renders and `install.ps1` parses.
 
-```sh
-dotnet run --project src/Gard.Cli -c Release -- --version
-dotnet run --project src/Gard.Cli -c Release -- test --csv-header
-```
+### Releasing
 
-The CI workflow builds and tests on Ubuntu, macOS and Windows. The release
-workflow creates self-contained binaries and a draft GitHub Release for `v*`
-tags.
+1. Bump `<Version>` in `Directory.Build.props` and move `[Unreleased]` in
+   `CHANGELOG.md` to the new version.
+2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`. `release.yml`
+   verifies the tag matches the version, builds every platform and creates a
+   **draft** release with archives, `.deb` packages and `SHA256SUMS`.
+3. Review and publish the draft. `homebrew.yml` then renders the formula and
+   commits it to `gard-net/homebrew-gard` (needs the `HOMEBREW_TAP_TOKEN`
+   secret; see `packaging/README.md`). The install scripts pick up the new
+   release automatically.
 
 ## Benchmarks
 

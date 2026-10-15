@@ -1,6 +1,6 @@
 # Native AOT Notes
 
-Status for `v0.2.6`: Gard release packaging attempts Native AOT first and falls
+Status for `v0.3.0`: Gard release packaging attempts Native AOT first and falls
 back to self-contained single-file binaries when AOT is not available on a
 platform or runner.
 

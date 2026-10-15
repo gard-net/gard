@@ -1,0 +1,120 @@
+name: Homebrew
+
+# Al publicar un release (el draft que deja release.yml), regenera la fórmula
+# desde SHA256SUMS y la commitea en gard-net/homebrew-gard. Así
+# `brew install gard-net/gard/gard` siempre trae la última versión.
+#
+# Requiere el secret HOMEBREW_TAP_TOKEN: fine-grained PAT con
+# "Contents: Read and write" sólo sobre gard-net/homebrew-gard. Sin él, el job
+# deja la fórmula como artefacto y avisa (no falla el release).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag ya publicado (ej. v0.3.0)'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew
+  cancel-in-progress: false
+
+jobs:
+  formula:
+    name: actualizar Formula/gard.rb
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolver tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        shell: bash
+        run: |
+          TAG="${INPUT_TAG:-$RELEASE_TAG}"
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::notice::'$TAG' no es un release estable vX.Y.Z; Homebrew no se actualiza"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            echo "::notice::$TAG es pre-release; Homebrew no se actualiza"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Bajar SHA256SUMS del release
+        if: steps.tag.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir dist
+
+      - name: Renderizar fórmula
+        if: steps.tag.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          packaging/homebrew/render-formula.sh "$VERSION" dist/SHA256SUMS > gard.rb
+          ruby -c gard.rb
+          cat gard.rb
+
+      - name: Guardar fórmula como artefacto
+        if: steps.tag.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula
+          path: gard.rb
+
+      - name: ¿Hay token para el tap?
+        if: steps.tag.outputs.skip == 'false'
+        id: token
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN no está configurado: la fórmula quedó como artefacto; súbela a mano a gard-net/homebrew-gard."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout del tap
+        if: steps.tag.outputs.skip == 'false' && steps.token.outputs.ok == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: gard-net/homebrew-gard
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Commit y push al tap
+        if: steps.tag.outputs.skip == 'false' && steps.token.outputs.ok == 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        working-directory: tap
+        run: |
+          mkdir -p Formula
+          cp ../gard.rb Formula/gard.rb
+          if git diff --quiet -- Formula/gard.rb; then
+            echo "La fórmula ya está en $TAG; nada que hacer."
+            exit 0
+          fi
+          git config user.name "gard-release-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/gard.rb
+          git commit -m "gard ${TAG}"
+          git push
+          echo "### Homebrew actualizado a ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo '`brew install gard-net/gard/gard`' >> "$GITHUB_STEP_SUMMARY"

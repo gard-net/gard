@@ -108,3 +108,45 @@ jobs:
           # Rechazo de opciones: debe salir con 2, no abortar.
           set +e; out/aot/gard --style fancy scan; CODE=$?; set -e
           [ "$CODE" -eq 2 ] || { echo "::error::exit $CODE esperado 2"; exit 1; }
+          out/aot/gard completions bash | bash -n
+          out/aot/gard doctor --json | python3 -c 'import json,sys; assert json.load(sys.stdin)["schema"]=="gard.doctor/1"'
+
+      - name: Lint de instaladores
+        run: shellcheck scripts/install.sh packaging/homebrew/render-formula.sh
+
+      - name: install.sh contra un mirror local del binario recién compilado
+        shell: bash
+        run: |
+          VER=$(dotnet msbuild src/Gard.Cli/Gard.Cli.csproj -getProperty:Version)
+          NAME="gard-v${VER}-linux-x64"
+          mkdir -p "mirror/v${VER}/$NAME"
+          cp out/aot/gard "mirror/v${VER}/$NAME/"
+          tar -C "mirror/v${VER}" -czf "mirror/v${VER}/$NAME.tar.gz" "$NAME"
+          (cd "mirror/v${VER}" && sha256sum "$NAME.tar.gz" > SHA256SUMS)
+          GARD_VERSION="$VER" GARD_DOWNLOAD_BASE="file://$PWD/mirror" GARD_INSTALL_DIR="$PWD/ibin" sh scripts/install.sh
+          "$PWD/ibin/gard" --version | grep -q "gard $VER"
+
+      - name: Fórmula Homebrew renderizable
+        shell: bash
+        run: |
+          printf '%s  %s\n' a gard-v9.9.9-osx-arm64.tar.gz b gard-v9.9.9-osx-x64.tar.gz \
+            c gard-v9.9.9-linux-x64.tar.gz d gard-v9.9.9-linux-arm64.tar.gz > sums
+          packaging/homebrew/render-formula.sh 9.9.9 sums > gard.rb
+          ruby -c gard.rb
+          ! grep -q '__' gard.rb
+
+  # pwsh no corre en los runners Linux con el mismo host que el usuario final:
+  # el parseo se valida en Windows real.
+  installer-windows:
+    name: install.ps1 parsea (windows)
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse install.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_.ToString() }; exit 1 }
+          Write-Host 'install.ps1 OK'
