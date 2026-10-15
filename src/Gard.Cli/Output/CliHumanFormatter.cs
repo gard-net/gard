@@ -75,6 +75,8 @@ public static class CliHumanFormatter
             if (u.TargetBitrateBps > 0)
                 lines.Add($"  Target:  {FormatBps(u.TargetBitrateBps)}, miss {F2(u.BitrateMissPct)}%");
         }
+        if (Bufferbloat(r) is { } bloat)
+            lines.AddRange(["", $"Bufferbloat: latency rises to {F2(bloat.LoadedMs)} ms under load (baseline {F2(bloat.BaselineMs)} ms)"]);
         lines.AddRange(["", $"Quality:   {CliQuality.Label(CliQuality.Grade(r))}"]);
         return string.Join(Environment.NewLine, lines);
     }
@@ -111,7 +113,9 @@ public static class CliHumanFormatter
             $"{F2(r.PingMinMs)} {term.Dim("min")}  {F2(r.PingAvgMs)} {term.Dim("avg")}  " +
             $"{Grade(term, r.PingP95Ms, 10, 30, 100, F2(r.PingP95Ms))} {term.Dim("p95")}  {F2(r.PingMaxMs)} {term.Dim("max ms")}");
         panel.Row("Jitter", $"{Grade(term, r.JitterMs, 5, 15, 30, F2(r.JitterMs))} ms");
-        panel.Row("Loss", $"{Grade(term, r.LossPct, 0.05, 0.2, 1.0, F2(r.LossPct) + "%")}  {term.Dim($"of {r.PingSamples} probes")}");
+        // Son pings de control sin respuesta en 500 ms, no paquetes de datos
+        // perdidos: bajo bufferbloat suben aunque la red no pierda nada.
+        panel.Row("Probe loss", $"{Grade(term, r.LossPct, 0.05, 0.2, 1.0, F2(r.LossPct) + "%")}  {term.Dim($"of {r.PingSamples} pings (no reply in 500 ms)")}");
         if (r.RttUnderLoadMs is { } rtt)
         {
             panel.Row("Under load",
@@ -126,9 +130,27 @@ public static class CliHumanFormatter
                 panel.Row("Target", $"{FormatBps(u.TargetBitrateBps)} per stream {s.Dot} miss {F2(u.BitrateMissPct)}%");
         }
         panel.Blank();
+        if (Bufferbloat(r) is { } bloat)
+        {
+            panel.Line($"{term.Yellow(s.Warn)} {term.Bold("Bufferbloat")} {s.Dot} latency rises to {F2(bloat.LoadedMs)} ms under load " +
+                term.Dim($"(baseline {F2(bloat.BaselineMs)} ms)"));
+        }
         panel.Line($"{QualityGlyph(term, quality)} {term.Bold(Capitalize(CliQuality.Label(quality)))} {s.Dot} {VerdictCopy(quality)}");
         panel.Bottom();
         return panel.ToString();
+    }
+
+    /// <summary>
+    /// Bufferbloat: el RTT bajo carga (p95 de los echo sobre el plano de datos)
+    /// supera 100 ms y es al menos 5× la línea base. Explica "probe loss" alto
+    /// en Wi-Fi o routers con colas grandes aunque no se pierdan datos.
+    /// </summary>
+    public static (double BaselineMs, double LoadedMs)? Bufferbloat(TestResult r)
+    {
+        if (r.RttUnderLoadMs is not { Samples: > 0 } rtt) return null;
+        var baseline = rtt.BaselineMedianMs > 0 ? rtt.BaselineMedianMs : r.PingMinMs;
+        if (baseline <= 0) return null;
+        return rtt.P95Ms >= 100 && rtt.P95Ms >= 5 * baseline ? (baseline, rtt.P95Ms) : null;
     }
 
     private static string Grade(CliTerminal term, double value, double good, double ok, double warn, string text) =>

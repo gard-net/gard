@@ -97,6 +97,14 @@ public class CliOptionsTests
     }
 
     [Fact]
+    public void ParseTest_Udp_DefaultsToMtuSafePayload()
+    {
+        // Antes: `gard test host -u` fallaba con "--payload must be between 64 and 65507".
+        Assert.Equal(1200, CliOptions.ParseTest(["10.0.0.7", "--transport", "udp"]).Parameters.PayloadSize);
+        Assert.Equal(65_536, CliOptions.ParseTest(["10.0.0.7"]).Parameters.PayloadSize);
+    }
+
+    [Fact]
     public void ParseTest_UdpBidir_NeedsTwoStreams()
     {
         var ex = Assert.Throws<CliOptionException>(() =>

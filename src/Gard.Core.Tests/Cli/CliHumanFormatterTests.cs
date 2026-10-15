@@ -33,7 +33,7 @@ public class CliHumanFormatterTests
 
         Assert.StartsWith("╭─ gard", plain);
         Assert.Contains("╰", plain);
-        foreach (var section in new[] { "Throughput", "Latency", "Jitter", "Loss", "Under load", "Datagrams", "Target" })
+        foreach (var section in new[] { "Throughput", "Latency", "Jitter", "Probe loss", "Under load", "Datagrams", "Target" })
             Assert.Contains(section, plain);
         Assert.Contains("100.00 Mb/s", plain);
         Assert.Contains("mean", plain);

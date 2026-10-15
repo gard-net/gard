@@ -67,7 +67,7 @@ public class LandspeedTxtRecordTests
     }
 
     [Fact]
-    public void Parse_UnknownPlatform_FallsBackToLinux()
+    public void Parse_UnknownPlatform_IsUnknownNotLinux()
     {
         var attrs = new Dictionary<string, string>
         {
@@ -78,7 +78,8 @@ public class LandspeedTxtRecordTests
         };
         var parsed = LandspeedTxtRecord.Parse(attrs);
         Assert.NotNull(parsed);
-        Assert.Equal(PeerPlatform.Linux, parsed!.Platform);
+        // Antes caía a Linux y un peer desconocido se mostraba como "linux".
+        Assert.Equal(PeerPlatform.Unknown, parsed!.Platform);
     }
 
     [Fact]

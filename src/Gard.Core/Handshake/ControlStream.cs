@@ -55,7 +55,7 @@ public sealed class ControlStream : IAsyncDisposable
                     continue;
             }
         }
-        throw LandspeedException.Transport("stream cerrado antes del siguiente mensaje");
+        throw LandspeedException.ConnectionClosed();
     }
 
     /// <summary>

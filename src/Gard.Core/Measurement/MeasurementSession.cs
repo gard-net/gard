@@ -32,13 +32,20 @@ public sealed record FinishedProgress(TestResult Result) : MeasurementProgress;
 /// </summary>
 public static class MeasurementSession
 {
+    /// <param name="PerStreamBps">Recibido por stream (en bidir: la bajada).</param>
+    /// <param name="Split">Sólo en bidir simultáneo: subida (enviado) y bajada (recibido) por separado.</param>
     private sealed record PhaseSnapshot(
         ulong MeanBps,
         ulong PeakBps,
         IReadOnlyList<ulong> PerStreamBps,
         ulong TotalBytes,
         double DurS,
-        IReadOnlyList<IntervalSample> IntervalSamples);
+        IReadOnlyList<IntervalSample> IntervalSamples,
+        DirectionSplit? Split = null);
+
+    private sealed record DirectionSplit(
+        ulong DownMeanBps, ulong DownPeakBps,
+        ulong UpMeanBps, ulong UpPeakBps, IReadOnlyList<ulong> UpPerStreamBps);
 
     public static async Task<TestResult> RunClientAsync(
         IFrameTransport controlConnection,
@@ -51,6 +58,7 @@ public static class MeasurementSession
     {
         var startedAt = DateTimeOffset.UtcNow;
         var parms = inputs.Parameters;
+        EnsureSupportedByPeer(parms, inputs.NegotiatedCaps);
 
         // 1. Fase PING/JITTER (§5.4): 20 pings @ 50 ms, descarta el primero.
         var pingStats = await PingEngine.RunFixedCountAsync(
@@ -164,17 +172,22 @@ public static class MeasurementSession
             foreach (var c in counters) c.Reset();
             globalCounter.Reset();
 
+            // En bidir simultáneo lo enviado va a contadores propios: mezclado con lo
+            // recibido no había forma de reportar subida y bajada por separado.
+            var bidir = phaseDirection == TestDirection.Bidir;
+            var sendCounters = bidir ? Enumerable.Range(0, dataConns.Count).Select(_ => new ByteCounter()).ToArray() : null;
+            var sendGlobal = bidir ? new ByteCounter() : globalCounter;
+
             using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var sendTasks = new List<Task>();
-            if (phaseDirection == TestDirection.Up || phaseDirection == TestDirection.Bidir)
+            if (phaseDirection == TestDirection.Up || bidir)
             {
                 for (var i = 0; i < dataConns.Count; i++)
                 {
-                    var cnt = counters[i];
-                    var sendCnt = phaseDirection == TestDirection.Bidir ? new ByteCounter() : cnt;
+                    var sendCnt = sendCounters?[i] ?? counters[i];
                     var conn = dataConns[i];
                     sendTasks.Add(DataChannels.SendLoopDoubleAsync(
-                        conn, parms.PayloadSize, sendCnt, globalCounter, sendCts.Token));
+                        conn, parms.PayloadSize, sendCnt, sendGlobal, sendCts.Token));
                 }
             }
 
@@ -183,15 +196,17 @@ public static class MeasurementSession
             {
                 await Task.Delay(TimeSpan.FromSeconds(parms.WarmupS), cancellationToken).ConfigureAwait(false);
                 _ = globalCounter.Drain();
+                _ = sendGlobal.Drain();
                 foreach (var c in counters) c.Reset();
+                if (sendCounters is not null) foreach (var c in sendCounters) c.Reset();
             }
 
             var samples = new List<IntervalSample>();
             if (rttCollector is not null) rttCollector.Accepting = true;
             var phaseStart = MonotonicClock.NowNs();
             var phaseEnd = phaseStart + (ulong)(parms.DurationS * 1_000_000_000);
-            ulong phasePeakBps = 0;
-            ulong measuredBytesTotal = 0;
+            ulong phasePeakBps = 0, downPeakBps = 0, upPeakBps = 0;
+            ulong measuredBytesTotal = 0, sentBytesTotal = 0;
             var windowStart = phaseStart;
             var nextWindow = phaseStart + WindowNs;
             while (MonotonicClock.NowNs() < phaseEnd)
@@ -200,13 +215,19 @@ public static class MeasurementSession
                 var now = MonotonicClock.NowNs();
                 if (now >= nextWindow)
                 {
-                    var windowBytes = globalCounter.Drain();
+                    var receivedBytes = globalCounter.Drain();
+                    var sentBytes = bidir ? sendGlobal.Drain() : 0;
+                    var windowBytes = receivedBytes + sentBytes;
                     measuredBytesTotal += windowBytes;
+                    sentBytesTotal += sentBytes;
                     // Ventana real, no 200 ms fijos (`bytes * 40` como Swift): un tick
                     // atrasado por GC/scheduling inflaba el bps y sesgaba peak_bps.
                     var elapsedNs = Math.Max(1UL, now - windowStart);
-                    var bps = (ulong)(windowBytes * 8.0 * 1_000_000_000.0 / elapsedNs);
+                    ulong Bps(ulong bytes) => (ulong)(bytes * 8.0 * 1_000_000_000.0 / elapsedNs);
+                    var bps = Bps(windowBytes);
                     if (bps > phasePeakBps) phasePeakBps = bps;
+                    downPeakBps = Math.Max(downPeakBps, Bps(receivedBytes));
+                    upPeakBps = Math.Max(upPeakBps, Bps(sentBytes));
                     if (intervalReportingEnabled)
                     {
                         samples.Add(new IntervalSample
@@ -222,20 +243,27 @@ public static class MeasurementSession
                     nextWindow = now + WindowNs;
                 }
             }
-            measuredBytesTotal += globalCounter.Drain();
+            var tailSent = bidir ? sendGlobal.Drain() : 0;
+            measuredBytesTotal += globalCounter.Drain() + tailSent;
+            sentBytesTotal += tailSent;
             if (rttCollector is not null) rttCollector.Accepting = false;
 
             var phaseDurS = Math.Max(
                 (MonotonicClock.NowNs() - phaseStart) / 1_000_000_000.0, 0.001);
-            var phaseMeanBps = (ulong)(measuredBytesTotal * 8.0 / phaseDurS);
-            var phasePerStreamBps = counters.Select(c => (ulong)(c.Value * 8.0 / phaseDurS)).ToArray();
+            ulong Mean(ulong bytes) => (ulong)(bytes * 8.0 / phaseDurS);
+            var phaseMeanBps = Mean(measuredBytesTotal);
+            var phasePerStreamBps = counters.Select(c => Mean(c.Value)).ToArray();
+            var split = sendCounters is null ? null : new DirectionSplit(
+                DownMeanBps: Mean(measuredBytesTotal - sentBytesTotal), DownPeakBps: downPeakBps,
+                UpMeanBps: Mean(sentBytesTotal), UpPeakBps: upPeakBps,
+                UpPerStreamBps: sendCounters.Select(c => Mean(c.Value)).ToArray());
 
             sendCts.Cancel();
             try { await Task.WhenAll(sendTasks).ConfigureAwait(false); } catch { }
 
             return new PhaseSnapshot(
                 phaseMeanBps, phasePeakBps, phasePerStreamBps,
-                measuredBytesTotal, phaseDurS, samples);
+                measuredBytesTotal, phaseDurS, samples, split);
         }
 
         var phaseSnapshots = new List<PhaseSnapshot>();
@@ -345,9 +373,32 @@ public static class MeasurementSession
                 }
                 else
                 {
-                    finalMeanBps = hostResult.Throughput.MeanBps;
-                    finalPeakBps = Math.Max(hostResult.Throughput.PeakBps, peakBps);
-                    finalPerStreamBps = hostResult.Throughput.PerStreamBps;
+                    // Simultáneo: bajada = lo que recibió el cliente. Subida = lo que
+                    // recibió el host por stream (receptor, más fiel que lo aceptado
+                    // por el kernel del emisor); si el host no lo reporta así, se usa
+                    // lo enviado por el cliente.
+                    var snap = phaseSnapshots[0];
+                    var split = snap.Split!;
+                    var hostPerStream = hostResult.Throughput.PerStreamBps;
+                    var upPerStream = hostPerStream.Count == parms.Streams && hostPerStream.Any(b => b > 0)
+                        ? hostPerStream
+                        : split.UpPerStreamBps;
+                    var upMean = upPerStream.Aggregate(0UL, (a, b) => a + b);
+                    finalThroughputUp = new ThroughputBody
+                    {
+                        MeanBps = upMean,
+                        PeakBps = Math.Max(split.UpPeakBps, upMean),
+                        PerStreamBps = upPerStream,
+                    };
+                    finalThroughputDown = new ThroughputBody
+                    {
+                        MeanBps = split.DownMeanBps,
+                        PeakBps = Math.Max(split.DownPeakBps, split.DownMeanBps),
+                        PerStreamBps = snap.PerStreamBps,
+                    };
+                    finalMeanBps = upMean + split.DownMeanBps;
+                    finalPeakBps = Math.Max(peakBps, finalMeanBps);
+                    finalPerStreamBps = snap.PerStreamBps.Zip(upPerStream, (d, u) => d + u).ToArray();
                 }
                 break;
             default:
@@ -408,6 +459,22 @@ public static class MeasurementSession
 
     private static PingStats CombinePingStats(PingStats initial, PingStats lossProbe)
         => new PingStats(initial.Samples.Concat(lossProbe.Samples).ToArray());
+
+    /// <summary>
+    /// Falla antes de la fase de ping si el test pide algo que el peer no anunció.
+    /// Un host LSP/1.1 que recibe <c>transport: "udp"</c> no lo entiende y corta la
+    /// conexión, y el usuario veía "stream cerrado" sin saber por qué. El bidir
+    /// secuencial sin <c>bidir_sequential</c> antes degradaba en silencio a
+    /// simultáneo, midiendo otra cosa que la pedida.
+    /// </summary>
+    public static void EnsureSupportedByPeer(TestParameters parms, Capabilities negotiated)
+    {
+        if (parms.Transport == TestTransport.Udp && !negotiated.HasFlag(Capabilities.UdpDataPlane))
+            throw LandspeedException.UdpNotNegotiated();
+        if (parms.Direction == TestDirection.Bidir && parms.BidirMode == BidirMode.Sequential
+            && !negotiated.HasFlag(Capabilities.BidirSequential))
+            throw LandspeedException.TestRejected("el peer no soporta bidir secuencial (bidir_sequential)");
+    }
 
     private static ulong NextRandomId() =>
         (ulong)Random.Shared.NextInt64(1, long.MaxValue);

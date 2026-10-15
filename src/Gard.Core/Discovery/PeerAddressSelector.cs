@@ -25,17 +25,29 @@ public static class PeerAddressSelector
             .Where(p => p is not null)
             .ToHashSet(StringComparer.Ordinal);
 
-        return v4.FirstOrDefault(a => localPrefixes.Contains(Prefix24(a) ?? ""))
-            ?? v4.FirstOrDefault(IsLikelyLan)
-            ?? v4[0];
+        // Orden: no-CGNAT antes que CGNAT (Tailscale/carrier: 100.64/10 suele estar
+        // en ambos equipos y "ganaba" a la LAN real), misma /24 antes que otra, y
+        // entre privadas 192.168 > 10 > 172.16/12 (puentes Docker).
+        return v4
+            .OrderBy(a => IsCgnat(a))
+            .ThenBy(a => !localPrefixes.Contains(Prefix24(a) ?? ""))
+            .ThenBy(Kind)
+            .First();
     }
 
-    private static bool IsLikelyLan(IPAddress address)
+    private static bool IsCgnat(IPAddress address)
     {
         var b = address.GetAddressBytes();
-        return b[0] == 10
-            || (b[0] == 192 && b[1] == 168)
-            || (b[0] == 172 && b[1] >= 16 && b[1] <= 31);
+        return b[0] == 100 && b[1] >= 64 && b[1] <= 127;
+    }
+
+    private static int Kind(IPAddress address)
+    {
+        var b = address.GetAddressBytes();
+        if (b[0] == 192 && b[1] == 168) return 0;
+        if (b[0] == 10) return 1;
+        if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return 2;
+        return IsCgnat(address) ? 4 : 3;
     }
 
     private static string? Prefix24(IPAddress address)

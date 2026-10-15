@@ -34,7 +34,7 @@ public sealed record LandspeedTxtRecord
                           System.Globalization.CultureInfo.InvariantCulture, out var v))
             return null;
         var name = attrs.TryGetValue("name", out var n) ? n : string.Empty;
-        var platform = attrs.TryGetValue("platform", out var p) ? PlatformFromWire(p) : PeerPlatform.Linux;
+        var platform = attrs.TryGetValue("platform", out var p) ? PlatformFromWire(p) : PeerPlatform.Unknown;
         var capsStr = attrs.TryGetValue("caps", out var c) ? c : "0";
         var caps = CapabilitiesExtensions.ParseHex(capsStr) ?? Capabilities.None;
 
@@ -76,6 +76,7 @@ public sealed record LandspeedTxtRecord
         "tvos"    => PeerPlatform.Tvos,
         "windows" => PeerPlatform.Windows,
         "android" => PeerPlatform.Android,
-        _         => PeerPlatform.Linux,
+        "linux"   => PeerPlatform.Linux,
+        _         => PeerPlatform.Unknown,
     };
 }

@@ -117,7 +117,8 @@ public static class ClientHandshake
             SessionId = ack.SessionId,
             NegotiatedCaps = negotiated,
             PeerVersion = ack.ProtocolVersion,
-            PeerPlatform = ack.Platform ?? PeerPlatform.Linux,
+            // Antes ?? Linux: un Mac o iPhone sin el campo se mostraba como linux.
+            PeerPlatform = ack.Platform ?? PeerPlatform.Unknown,
             ClockOffsetNs = offsetNs,
             ClockSyncRttNs = rttNs,
         };

@@ -54,7 +54,7 @@ public static class CliSpec
         new("--streams", "N", "Parallel streams, 1..32. Default: 1.", Short: "-P"),
         new("--duration", "S", "Measurement seconds, max 3600. Default: 10.", Short: "-t"),
         new("--warmup", "S", "Seconds excluded at the start, max 60. Default: 1.", Short: "-O"),
-        new("--payload", "BYTES", "Payload size. TCP 512..4194304, UDP 64..65507.", Short: "-l"),
+        new("--payload", "BYTES", "Payload size. TCP 512..4194304 (default 65536), UDP 64..65507 (default 1200).", Short: "-l"),
         new("--transport", "T", "tcp or udp. Default: tcp."),
         new("--udp", null, "Shortcut for --transport udp.", Short: "-u", Expand: ["--transport", "udp"]),
         new("--bitrate", "BPS", "UDP target per stream, e.g. 200M or 1.5G. 0 = unlimited.", Short: "-b"),
@@ -66,10 +66,11 @@ public static class CliSpec
     public static readonly CliCommandSpec[] Commands =
     [
         new("scan", "Discover LSP peers on the local network.",
-            ["gard scan [--seconds N] [--json]"],
+            ["gard scan [--seconds N] [--all] [--json]"],
             [
                 new("--seconds", "N", "Scan duration in seconds. Default: 5.", Short: "-t"),
-                new("--json", null, "Print peers as JSON.", Short: "-J"),
+                new("--all", null, "Also list cached announcements that do not answer.", Short: "-a"),
+                new("--json", null, "Print peers as JSON (includes reachability).", Short: "-J"),
             ],
             ["gard scan", "gard scan -t 3 --json"]),
 

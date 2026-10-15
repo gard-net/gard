@@ -8,7 +8,36 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
+Mejoras surgidas de pruebas reales contra un Mac por Wi-Fi con un host LSP/1.1
+y la app LandSpeed en iPhone.
+
+### Fixed
+- `gard test <host> -u` sin `-l` fallaba con "--payload must be between 64 and
+  65507": el payload por defecto ahora depende del transporte (TCP 64 KiB, UDP
+  1200 B).
+- Pedir UDP (o bidir secuencial) a un peer que no lo negoció fallaba con
+  "stream cerrado…" a mitad del test; ahora el cliente lo detecta antes de
+  empezar y lo explica. El bidir secuencial ya no degrada en silencio a
+  simultáneo.
+- Peers que no anuncian plataforma (hosts LSP/1.0–1.1, app Apple) se mostraban
+  como `linux`; ahora `unknown` (`PeerPlatform.Unknown`).
+- Un cierre inesperado del peer se reporta en inglés y con una pista ("may be an
+  older version…") en vez del texto interno en español.
+- `scan` elegía la IP de Tailscale (100.64/10) en vez de la de la LAN cuando el
+  peer tenía ambas; ahora prefiere LAN privada, misma subred y evita CGNAT y
+  puentes Docker.
+- Bidir TCP simultáneo: reporta subida y bajada por separado (`throughput.up` /
+  `.down`), y `per_stream_bps` suma ambos sentidos (antes sólo lo recibido,
+  inconsistente con `mean_bps`).
+
 ### Added
+- `scan` verifica que cada peer responda (connect TCP) y muestra su latencia;
+  los anuncios mDNS cacheados de hosts que ya no existen se ocultan (`--all`
+  los lista). JSON: `reachable` y `connect_ms`. El host registra esas sondas
+  como tales, no como error.
+- Dashboard: aviso de **bufferbloat** cuando el RTT bajo carga supera 100 ms y
+  5× la línea base; "Loss" pasa a "Probe loss" (pings de control sin respuesta
+  en 500 ms, no paquetes de datos). JSON: campo `bufferbloat`.
 - `packaging/homebrew/publish-tap.sh vX.Y.Z`: actualiza el tap de Homebrew
   desde un release publicado con las credenciales locales. Es el método de
   publicación vigente (sin secret `HOMEBREW_TAP_TOKEN`); documentado en

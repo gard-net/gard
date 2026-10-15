@@ -53,6 +53,8 @@ public static class CliErrors
             "the peer does not support UDP tests; use --transport tcp",
         LandspeedException { Kind: LandspeedErrorKind.TestRejected } l =>
             $"test rejected by host: {l.Context.GetValueOrDefault("reason")}",
+        LandspeedException { Kind: LandspeedErrorKind.Transport } l when l.Context.ContainsKey("closed") =>
+            "the peer closed the connection unexpectedly; it may be an older version, or it stopped (try 'gard info <host>')",
         LandspeedException { Kind: LandspeedErrorKind.Transport } l =>
             $"connection to the peer failed: {l.Context.GetValueOrDefault("description") ?? l.Message}",
         _ => ex.Message,

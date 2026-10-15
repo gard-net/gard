@@ -139,6 +139,11 @@ public sealed class LandspeedException : Exception
     public static LandspeedException Timeout() =>
         new(LandspeedErrorKind.Timeout, "Tiempo de espera agotado.", new Dictionary<string, object?>());
 
+    /// <summary>El peer cerró la conexión de control cuando se esperaba un mensaje.</summary>
+    public static LandspeedException ConnectionClosed() =>
+        new(LandspeedErrorKind.Transport, "Error de transporte: stream cerrado antes del siguiente mensaje",
+            new Dictionary<string, object?> { ["description"] = "stream cerrado antes del siguiente mensaje", ["closed"] = true });
+
     public static LandspeedException Transport(string description, Exception? inner = null) =>
         new(LandspeedErrorKind.Transport, $"Error de transporte: {description}",
             new Dictionary<string, object?> { ["description"] = description }, inner);

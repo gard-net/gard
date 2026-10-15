@@ -7,7 +7,8 @@ using Gard.Core.Protocol;
 
 namespace Gard.Cli;
 
-public sealed record ScanOptions(int Seconds, bool Json = false);
+/// <param name="All">Incluir anuncios cacheados que no responden.</param>
+public sealed record ScanOptions(int Seconds, bool Json = false, bool All = false);
 
 /// <param name="RequirePairing">Exigir código de 6 dígitos (spec §7).</param>
 /// <param name="PairCode">Código fijo (<c>--pair-code</c>); <c>null</c> ⇒ generar uno al arrancar.</param>
@@ -68,7 +69,7 @@ public static class CliOptions
     {
         var seconds = GetIntOpt(args, "--seconds", 5);
         RequireRange(seconds, 1, 86_400, "--seconds");
-        return new ScanOptions(seconds, HasFlag(args, "--json"));
+        return new ScanOptions(seconds, HasFlag(args, "--json"), HasFlag(args, "--all"));
     }
 
     public static HostOptions ParseHost(string[] args, string defaultHostName)
@@ -96,12 +97,15 @@ public static class CliOptions
         var streams = GetIntOpt(args, "--streams", 1);
         var duration = GetDoubleOpt(args, "--duration", 10);
         var warmup = GetDoubleOpt(args, "--warmup", 1);
-        var payload = GetIntOpt(args, "--payload", 65_536);
+        var transStr = GetStringOpt(args, "--transport", "tcp").ToLowerInvariant();
+        // Default por transporte: 64 KiB rinde en TCP pero excede el máximo UDP
+        // (65507) y `gard test host -u` fallaba sin --payload. UDP: 1200 B (§12.2).
+        var payload = GetIntOpt(args, "--payload",
+            transStr == "udp" ? UdpDataPlane.DefaultPayloadSize : 65_536);
         var bidirMStr = GetStringOpt(args, "--bidir-mode", "simultaneous").ToLowerInvariant();
         var gap = GetDoubleOpt(args, "--gap", 0.5);
         var fmtStr = GetStringOpt(args, "--format", "human").ToLowerInvariant();
         var label = GetStringOpt(args, "--label", "");
-        var transStr = GetStringOpt(args, "--transport", "tcp").ToLowerInvariant();
         var bitrate = ParseBitrate(GetStringOpt(args, "--bitrate", "0"));
 
         var direction = dirStr switch

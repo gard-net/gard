@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Globalization;
+using System.Net.Sockets;
 using Gard.Core.Discovery;
 using Gard.Core.Protocol;
 
@@ -38,36 +40,67 @@ public static class ScanCommand
         await Task.WhenAll(refresh, spinner).ConfigureAwait(false);
         if (ctx.Interrupted.IsCancellationRequested) return GardApp.Interrupted;
 
-        var peers = browser.CurrentPeers.OrderBy(p => p.DeviceName, StringComparer.OrdinalIgnoreCase).ToList();
+        var discovered = browser.CurrentPeers.OrderBy(p => p.DeviceName, StringComparer.OrdinalIgnoreCase).ToList();
+        // mDNS cachea anuncios (PTR hasta 75 min): un host cerrado sin "goodbye"
+        // seguía apareciendo. Un connect TCP corto separa vivos de fantasmas.
+        var probes = await Task.WhenAll(discovered.Select(p => ProbeAsync(p, ctx.Interrupted))).ConfigureAwait(false);
+        var results = discovered.Zip(probes, (p, ms) => (Peer: p, ConnectMs: ms)).ToList();
+
         if (options.Json)
         {
             ctx.Out.WriteLine(CliJson.Serialize(new ScanReport
             {
                 DurationS = options.Seconds,
-                Peers = peers.Select(ScanPeerReport.From).ToArray(),
+                Peers = results.Select(r => ScanPeerReport.From(r.Peer, r.ConnectMs)).ToArray(),
             }, indented: !Console.IsOutputRedirected));
             return GardApp.Ok;
         }
 
-        if (peers.Count == 0)
+        var shown = options.All ? results : results.Where(r => r.ConnectMs is not null).ToList();
+        var stale = results.Count - results.Count(r => r.ConnectMs is not null);
+        if (shown.Count == 0)
         {
-            ctx.Out.WriteLine($"{term.Yellow(term.Symbols.Warn)} no peers found in {options.Seconds}s");
-            ctx.Err.WriteLine(term.Dim("  is 'gard host' running on the same LAN/VLAN, and is mDNS (UDP 5353) allowed?"));
+            ctx.Out.WriteLine($"{term.Yellow(term.Symbols.Warn)} no reachable peers found in {options.Seconds}s");
+            ctx.Err.WriteLine(term.Dim(stale > 0
+                ? $"  {stale} cached announcement{(stale == 1 ? "" : "s")} did not answer; run with --all to list them"
+                : "  is 'gard host' running on the same LAN/VLAN, and is mDNS (UDP 5353) allowed?"));
             return GardApp.Ok;
         }
 
-        var rows = peers.Select(p => (IReadOnlyList<string>)
+        var rows = shown.Select(r => (IReadOnlyList<string>)
         [
-            term.Bold(p.DeviceName),
-            p.Host is null ? term.Dim("resolving") : $"{FormatHost(p.Host)}:{p.Port}",
-            p.Platform.ToString().ToLowerInvariant(),
-            $"{p.ProtocolVersionMajor}.x",
-            p.Caps.HasFlag(Capabilities.UdpDataPlane) ? "tcp, udp" : "tcp",
+            term.Bold(r.Peer.DeviceName),
+            r.Peer.Host is null ? term.Dim("resolving") : $"{FormatHost(r.Peer.Host)}:{r.Peer.Port}",
+            r.Peer.Platform.ToString().ToLowerInvariant(),
+            $"{r.Peer.ProtocolVersionMajor}.x",
+            r.Peer.Caps.HasFlag(Capabilities.UdpDataPlane) ? "tcp, udp" : "tcp",
+            r.ConnectMs is { } ms ? $"{ms.ToString("F1", CultureInfo.InvariantCulture)} ms" : term.Red("no answer"),
         ]).ToList();
         ctx.Out.WriteLine(CliTable.Render(term,
-            [new("NAME", 28), new("ADDRESS", 46), new("OS", 8), new("LSP", 4), new("TRANSPORTS", 10)], rows));
-        ctx.Out.WriteLine(term.Dim($"{peers.Count} peer{(peers.Count == 1 ? "" : "s")} found {term.Symbols.Dot} test one with: gard test <address>"));
+            [new("NAME", 28), new("ADDRESS", 46), new("OS", 8), new("LSP", 4), new("TRANSPORTS", 10), new("CONNECT", 10, Right: true)], rows));
+        var footer = $"{shown.Count} peer{(shown.Count == 1 ? "" : "s")} {term.Symbols.Dot} test one with: gard test <address>";
+        if (!options.All && stale > 0) footer += $" {term.Symbols.Dot} {stale} stale hidden (--all)";
+        ctx.Out.WriteLine(term.Dim(footer));
         return GardApp.Ok;
+    }
+
+    /// <summary>Tiempo de connect TCP en ms, o <c>null</c> si no responde en 800 ms.</summary>
+    private static async Task<double?> ProbeAsync(DiscoveredPeer peer, CancellationToken ct)
+    {
+        if (peer.Host is null || peer.Port is not { } port) return null;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(800);
+        using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            await socket.ConnectAsync(peer.Host, port, cts.Token).ConfigureAwait(false);
+            return sw.Elapsed.TotalMilliseconds;
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
     // IPv6 entre corchetes para que host:puerto no sea ambiguo.

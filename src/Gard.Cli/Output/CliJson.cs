@@ -29,6 +29,8 @@ public sealed record TestReport
     public RttUnderLoadStats? RttUnderLoad { get; init; }
     public UdpStatsBody? Udp { get; init; }
     public IntervalReport? Intervals { get; init; }
+    /// <summary>Presente sólo si se detectó (ver <c>CliHumanFormatter.Bufferbloat</c>).</summary>
+    public BufferbloatReport? Bufferbloat { get; init; }
     public required string Quality { get; init; }
 
     public static TestReport From(TestResult r, TestParameters p, string? label) => new()
@@ -73,8 +75,17 @@ public sealed record TestReport
         RttUnderLoad = r.RttUnderLoadMs,
         Udp = r.Udp,
         Intervals = r.Intervals,
+        Bufferbloat = CliHumanFormatter.Bufferbloat(r) is { } b
+            ? new BufferbloatReport { BaselineMs = b.BaselineMs, LoadedP95Ms = b.LoadedMs }
+            : null,
         Quality = CliQuality.Label(CliQuality.Grade(r)),
     };
+}
+
+public sealed record BufferbloatReport
+{
+    public required double BaselineMs { get; init; }
+    public required double LoadedP95Ms { get; init; }
 }
 
 public sealed record PeerReport
@@ -131,9 +142,14 @@ public sealed record ScanPeerReport
     public required int LspMajor { get; init; }
     public required string Caps { get; init; }
     public required IReadOnlyList<string> Capabilities { get; init; }
+    /// <summary>Respondió a un connect TCP durante el scan (los anuncios mDNS se cachean).</summary>
+    public bool Reachable { get; init; }
+    public double? ConnectMs { get; init; }
 
-    public static ScanPeerReport From(DiscoveredPeer p) => new()
+    public static ScanPeerReport From(DiscoveredPeer p, double? connectMs = null) => new()
     {
+        Reachable = connectMs is not null,
+        ConnectMs = connectMs is { } ms ? Math.Round(ms, 2) : null,
         Name = p.DeviceName,
         Host = p.Host,
         Port = p.Port,

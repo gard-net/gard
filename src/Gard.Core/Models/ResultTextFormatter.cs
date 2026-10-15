@@ -190,6 +190,7 @@ public static class ResultTextFormatter
         PeerPlatform.Windows => "Windows",
         PeerPlatform.Android => "Android",
         PeerPlatform.Linux   => "Linux",
+        PeerPlatform.Unknown => "desconocida",
         _ => p.ToString(),
     };
 }

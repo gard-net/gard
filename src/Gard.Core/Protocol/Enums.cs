@@ -18,6 +18,11 @@ public enum PeerPlatform
     [JsonStringEnumMemberName("windows")] Windows,
     [JsonStringEnumMemberName("android")] Android,
     [JsonStringEnumMemberName("linux")]   Linux,
+    /// <summary>
+    /// El peer no anunció plataforma (hosts LSP/1.0–1.1 y la app Apple no mandan
+    /// <c>hello_ack.platform</c>). Sólo se usa localmente: gard nunca lo envía.
+    /// </summary>
+    [JsonStringEnumMemberName("unknown")] Unknown,
 }
 
 [JsonConverter(typeof(LspEnumConverter<TestDirection>))]

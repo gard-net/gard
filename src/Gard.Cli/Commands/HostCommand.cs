@@ -100,11 +100,13 @@ public static class HostCommand
         log.Info(id, $"connection from {remote}");
 
         await using var transport = TcpFrameTransport.FromAccepted(socket);
+        var handshakeDone = false;
         try
         {
             var hs = await HostHandshake.AcceptAsync(
                 transport, identity, pairing: pairing, cancellationToken: ct,
                 remoteAddress: (socket.RemoteEndPoint as IPEndPoint)?.Address).ConfigureAwait(false);
+            handshakeDone = true;
             log.Info(id, $"handshake LSP/{hs.PeerVersion} {hs.PeerPlatform.ToString().ToLowerInvariant()} caps {hs.NegotiatedCaps.ToHexString()}");
 
             await using var router = new ControlMessageRouter(new ControlStream(transport, ct));
@@ -129,6 +131,11 @@ public static class HostCommand
                 LandspeedErrorKind.PairingRequired => "no code sent",
                 _ => "wrong code",
             }})");
+        }
+        catch (LandspeedException ex) when (!handshakeDone && ex.Context.ContainsKey("closed"))
+        {
+            // Connect y cierre sin hello: la sonda de `gard scan` u otro chequeo de puerto.
+            log.Info(id, "closed before handshake (reachability probe)");
         }
         catch (LandspeedException ex) when (ex.Kind == LandspeedErrorKind.PeerClosedWithoutTest)
         {
