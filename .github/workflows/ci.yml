@@ -10,6 +10,9 @@ on:
 
 # Si alguien pushea como loco, matamos los runs viejos — no vamos a
 # quemar minutos en commits que ya están obsoletos.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -77,3 +80,31 @@ jobs:
           name: test-results-${{ matrix.os }}
           path: TestResults/*.trx
           retention-days: 7
+
+  # El release intenta Native AOT y cae a self-contained con un warning: sin
+  # este job una regresión AOT (reflexión, trimming) sólo aparecía al taguear.
+  aot-smoke:
+    name: Native AOT smoke (linux-x64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish Native AOT
+        run: dotnet publish src/Gard.Cli/Gard.Cli.csproj -c Release -r linux-x64 -p:PublishAot=true -o out/aot
+
+      - name: Smoke del binario nativo
+        shell: bash
+        run: |
+          out/aot/gard --version
+          out/aot/gard --help >/dev/null
+          out/aot/gard doctor --plain >/dev/null
+          out/aot/gard test --csv-header >/dev/null
+          # Rechazo de opciones: debe salir con 2, no abortar.
+          set +e; out/aot/gard --style fancy scan; CODE=$?; set -e
+          [ "$CODE" -eq 2 ] || { echo "::error::exit $CODE esperado 2"; exit 1; }

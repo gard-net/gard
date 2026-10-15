@@ -15,6 +15,10 @@ on:
         description: 'Tag a buildear (ej. v0.2.6). Vacío = usa el ref actual.'
         required: false
 
+# Mínimo privilegio: sólo el job `release` escribe (crea el draft).
+permissions:
+  contents: read
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false  # acá NO cancelamos: el release debe terminar sí o sí
@@ -48,6 +52,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # workflow_dispatch con tag: buildear ESE tag, no el ref actual.
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Instalar .NET 10
         uses: actions/setup-dotnet@v4
@@ -61,12 +68,33 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.slnx') }}
           restore-keys: nuget-${{ runner.os }}-
 
-      - name: Calcular versión
+      - name: Calcular y verificar versión
         id: ver
         shell: bash
+        env:
+          # Por env y no interpolado en el script: el input es texto libre.
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          REF="${{ github.event.inputs.tag || github.ref_name }}"
-          VER="${REF#v}"
+          # Directory.Build.props es la fuente de verdad de la versión.
+          PROPS=$(dotnet msbuild src/Gard.Cli/Gard.Cli.csproj -getProperty:Version)
+          if [ -z "$INPUT_TAG" ] && [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            # Dispatch sin tag sobre una rama: build de prueba, sin release.
+            REF="v${PROPS}-${GITHUB_SHA::7}"
+            VER="$PROPS"
+          else
+            REF="${INPUT_TAG:-$GITHUB_REF_NAME}"
+            if ! [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::'$REF' no es un tag vX.Y.Z válido"
+              exit 1
+            fi
+            VER="${REF#v}"
+            # Un tag que no coincide publicaría un binario con versión distinta
+            # a la del CHANGELOG.
+            if [ "$PROPS" != "$VER" ]; then
+              echo "::error::tag $REF no coincide con <Version>$PROPS</Version> de Directory.Build.props"
+              exit 1
+            fi
+          fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "tag=$REF"     >> "$GITHUB_OUTPUT"
           echo "→ buildeando $REF (version=$VER)"
@@ -116,7 +144,12 @@ jobs:
         if: matrix.rid != 'win-x64'
         shell: bash
         run: |
-          "dist/$DEST/gard" --version
+          OUT=$("dist/$DEST/gard" --version)
+          echo "$OUT"
+          case "$OUT" in
+            "gard ${{ steps.ver.outputs.version }} "*) ;;
+            *) echo "::error::--version no reporta ${{ steps.ver.outputs.version }}"; exit 1 ;;
+          esac
           "dist/$DEST/gard" --help >/dev/null
           "dist/$DEST/gard" doctor --plain >/dev/null
           "dist/$DEST/gard" test --csv-header >/dev/null
@@ -126,7 +159,11 @@ jobs:
         if: matrix.rid == 'win-x64'
         shell: pwsh
         run: |
-          & "dist/$env:DEST/gard.exe" --version
+          $out = & "dist/$env:DEST/gard.exe" --version
+          Write-Host $out
+          if (-not $out.StartsWith("gard ${{ steps.ver.outputs.version }} ")) {
+            Write-Error "--version no reporta ${{ steps.ver.outputs.version }}"; exit 1
+          }
           & "dist/$env:DEST/gard.exe" --help | Out-Null
           & "dist/$env:DEST/gard.exe" doctor --plain | Out-Null
           & "dist/$env:DEST/gard.exe" test --csv-header | Out-Null
@@ -208,7 +245,7 @@ jobs:
   release:
     name: Crear GitHub Release (draft)
     needs: publish
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -247,6 +284,7 @@ jobs:
       - name: Crear GitHub Release (draft)
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           draft: true
           generate_release_notes: true
           files: |

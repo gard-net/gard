@@ -35,9 +35,41 @@ cambios de forma wire; el host ahora emite códigos ya definidos en la spec.
   límite de frame y daba un "éxito" con 0 bps); `--duration`, `--warmup` y
   `--gap` con máximos alineados al host.
 
+- El host registra `gard info` (handshake y cierre) como cierre normal y no
+  como `!! error: stream cerrado`.
+- Loss probe: una cancelación con un pong pendiente descartaba todas las
+  muestras bajo carga.
+- `peak_bps` del cliente usa la duración real de cada ventana (antes asumía
+  200 ms fijos e inflaba el pico tras un tick atrasado).
+- RTT bajo carga: spike = RTT > 3 × baseline como dice la spec, sin contar
+  muestras de warmup ni gap.
+- UDP: el throughput se calcula sobre la ventana HELLO→`test_end` (antes
+  incluía setup, graces e intercambio de `udp_stats`, ~5-10 % menos).
+- `UdpSender` corre realmente en un hilo dedicado; un `await Task.Yield()`
+  devolvía el busy-wait del pacer al ThreadPool.
+- Parser de frames lineal (antes O(n²) con muchos frames chicos por lectura) y
+  sin retener 32 MiB por conexión tras un frame grande.
+- `ProtocolVersion` acepta SemVer de 3 partes (`"1.2.0"`); enums del wire
+  rechazan valores numéricos.
+- CLI: `--style` inválido abortaba con stack trace; tablas con celdas
+  coloreadas se recortaban mal y derramaban el color; `watch` terminaba en
+  silencio con exit 0 ante el timeout de una muestra.
+
+### Changed
+- Exit codes: `2` para uso inválido, `1` para fallos de ejecución (antes `2`
+  para todo, sugiriendo `--help` incluso ante un connection refused).
+- La versión vive sólo en `Directory.Build.props`; el binario la lee del
+  assembly. El release verifica que el tag coincida y que `--version` la
+  reporte; `workflow_dispatch` construye el tag pedido y su input ya no se
+  interpola en el shell.
+- CI: permisos mínimos (`contents: read`) y job de smoke Native AOT en
+  linux-x64 para detectar regresiones AOT antes de taguear.
+
 ### Tests
 - Validador de `test_start`, rechazos 3003/3004/ack negativo end-to-end,
   desconexión a mitad de fase, dato UDP antes del HELLO, timeouts de handshake.
+- UDP end-to-end con duración y pacing, loss probe cancelado, umbral de
+  spikes, parser con 20k frames, SemVer, tablas ANSI, exit hints.
 
 ## [0.2.6] — 2026-06-03
 

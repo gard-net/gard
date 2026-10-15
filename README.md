@@ -161,7 +161,7 @@ gard help doctor
 gard test --help
 ```
 
-Human output uses a rich ASCII/ANSI terminal style when stdout is interactive.
+Human output uses a rich Unicode/ANSI terminal style when stdout is interactive.
 Use `--plain`, `--no-color` or `--style plain` for logs, narrow terminals or
 automation. JSON and CSV never include banners, ANSI color or progress text.
 
@@ -182,6 +182,18 @@ gard host --dynamic-port
 
 Starts a host and prints its platform, service name, TCP control port and local
 interfaces. Stop with `Ctrl+C`.
+
+LSP pairing is not enforced yet, so any peer on the LAN can request a test. The
+host therefore bounds what a peer can ask for:
+
+- At most 4 concurrent sessions; extra connections are closed on accept.
+- The handshake must complete within 10 s.
+- `test_start` is validated before any socket is opened: `streams` 1..32,
+  `duration_s` up to 3600, `warmup_s`/`gap_s` up to 60, TCP payload up to 4 MiB,
+  UDP payload 64..65507. Out-of-range payloads get LSP error `3004`; UDP without
+  a negotiated `udp_data_plane` gets `3003`; anything else gets a negative
+  `test_start_ack` with a reason.
+- A session ends as soon as the client disconnects.
 
 ### `gard test`
 
@@ -258,28 +270,35 @@ Latency
   Loss:    0.00% (234 samples)
 ```
 
-Interactive terminals use the richer layout by default:
+Interactive terminals use the richer dashboard by default (loopback example,
+`--no-color`):
 
 ```text
-gard v0.2.6
-  #####    ###    ####   ####
- ##       ## ##   ##  ## ##  ##
- ##  ###  #####   ####   ##  ##
-
-> gard test 192.168.1.50 --duration 10s --streams 4
-
-+------------------------------- RESULTS -------------------------------+
-| THROUGHPUT                                                           |
-| [####################........]  mean 720.09 Mb/s  peak 893.91 Mb/s   |
-| LATENCY                                                              |
-| Min    3.69 ms   Avg   43.33 ms   P95   73.35 ms   Max  103.90 ms   |
-| QUALITY                                                              |
-| Grade: degraded                                                      |
-+-----------------------------------------------------------------------+
+╔══════════════════════════════════════════════════════════════════════════╗
+║ GARD LINK METER  ●  EXCELLENT                                            ║
+║ target 127.0.0.1   lsp/1.2   down   2 streams   2s                       ║
+║ ──────────────────────────────────────────────────────────────────────── ║
+║ THROUGHPUT  MEAN 10.80 Gb/s   PEAK 14.87 Gb/s                            ║
+║ ███████████████████████████████░░░░░░░░░░░  73%                          ║
+║ ──────────────────────────────────────────────────────────────────────── ║
+║ ┌─ LATENCY ██████████ p95 4.89 ms └  ┌─ JITTER █████████░ 1.61 ms └      ║
+║ ┌─ LOSS ██████████ 0.00% └  samples 49                                   ║
+║ ┌─ RTT UNDER LOAD █████████░ p95 21.57 ms · spikes 1 └                   ║
+║ ──────────────────────────────────────────────────────────────────────── ║
+║ VERDICT  ● excellent  · local link is excellent for demanding local wor… ║
+╚══════════════════════════════════════════════════════════════════════════╝
 ```
 
 JSON and CSV are stable machine-readable modes. Progress logs go to stderr;
 the result stays on stdout.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success. |
+| `1` | Runtime failure: connection refused, timeout, peer rejected the test, protocol error. |
+| `2` | Usage error: unknown command, invalid or out-of-range option. |
 
 ## Protocol
 
@@ -348,6 +367,8 @@ Benchmarks require `iperf3`, `jq`, `awk` and `python3`.
 - `test` cannot connect: open the host TCP control port in the firewall.
 - UDP results are zero or lossy: ensure local firewalls allow the ephemeral UDP
   data ports opened after the TCP handshake.
+- `host rechazó test_start` / `code=3004`: the requested parameters exceed the
+  host limits listed under `gard host`. The CLI applies the same limits locally.
 - Windows UDP pacing is timer-sensitive. Gard raises timer resolution while
   running and releases it on shutdown.
 - Long high-rate UDP runs still use exact duplicate tracking in memory. A

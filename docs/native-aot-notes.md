@@ -26,6 +26,17 @@ Observed result on the Patagua Mac:
 - The self-contained fallback publish passed and produced a working `gard`
   binary.
 
+## Local Linux x64 run (2026-10-15)
+
+On Arch Linux with SDK 10.0.111 and clang, `dotnet publish -r linux-x64
+-p:PublishAot=true` links cleanly into a ~6 MB native `gard`. The only warning
+is IL2104 from `Common.Logging` (below). The binary passed `--version`,
+`doctor`, `info`, and TCP and UDP loopback tests against a native `gard host`.
+
+CI now runs the same publish plus a smoke test (`aot-smoke` job in
+`.github/workflows/ci.yml`), so AOT regressions surface on every PR instead
+of only as a release-time fallback warning.
+
 ## AOT warning backlog
 
 The remaining AOT issue is:
