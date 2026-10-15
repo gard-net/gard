@@ -18,58 +18,106 @@ public class CliHumanFormatterTests
         Assert.Contains("UDP", text);
     }
 
-    [Fact]
-    public void FormatRich_RendersDistinctiveAsciiDashboard()
-    {
-        var term = new CliTerminal(CliStyleOptions.Default, forceInteractive: true);
-        var text = CliHumanFormatter.Format(MakeResult(), term);
+    private static CliTerminal Rich(bool color = false, int width = 80, bool unicode = true) =>
+        new(new CliStyleOptions(Plain: false, NoColor: !color, Style: "rich"),
+            forceInteractive: true, forceWidth: width, forceUnicode: unicode);
 
-        Assert.Contains("GARD LINK METER", text);
-        Assert.Contains("╔", text);
-        Assert.Contains("╚", text);
-        Assert.Contains("║", text);
-        Assert.Contains("THROUGHPUT", text);
-        Assert.Contains("█", text);
-        Assert.Contains("░", text);
-        Assert.Contains("MEAN", text);
-        Assert.Contains("PEAK", text);
-        Assert.Contains("┌─", text);
-        Assert.Contains("└", text);
-        Assert.Contains("LATENCY", text);
-        Assert.Contains("RTT UNDER LOAD", text);
-        Assert.Contains("UDP DATAGRAMS", text);
-        Assert.Contains("VERDICT", text);
-        Assert.Contains("●", text);
-        Assert.Contains("good", text);
+    private static string[] PanelLines(string text) =>
+        text.Split(Environment.NewLine).Select(CliText.StripAnsi).ToArray();
+
+    [Fact]
+    public void FormatRich_RendersPanelWithAllSections()
+    {
+        var text = CliHumanFormatter.Format(MakeResult(), Rich(color: true));
+        var plain = CliText.StripAnsi(text);
+
+        Assert.StartsWith("╭─ gard", plain);
+        Assert.Contains("╰", plain);
+        foreach (var section in new[] { "Throughput", "Latency", "Jitter", "Loss", "Under load", "Datagrams", "Target" })
+            Assert.Contains(section, plain);
+        Assert.Contains("100.00 Mb/s", plain);
+        Assert.Contains("mean", plain);
+        Assert.Contains("peak", plain);
+        Assert.Contains("good", plain);
+        Assert.Contains("✓", plain);
     }
 
     [Fact]
     public void FormatRich_ShowsUpDownLanesWhenBidirectional()
     {
-        var term = new CliTerminal(new CliStyleOptions(Plain: false, NoColor: true, Style: "rich"), forceInteractive: true);
         var result = MakeResult() with
         {
             ThroughputUp = new ThroughputBody { MeanBps = 40_000_000, PeakBps = 50_000_000, PerStreamBps = [40_000_000] },
             ThroughputDown = new ThroughputBody { MeanBps = 90_000_000, PeakBps = 110_000_000, PerStreamBps = [90_000_000] },
         };
 
-        var text = CliHumanFormatter.Format(result, term);
+        var text = CliHumanFormatter.Format(result, Rich());
 
-        Assert.Contains("▲ UP", text);
-        Assert.Contains("▼ DOWN", text);
+        Assert.Contains("↑ up", text);
+        Assert.Contains("↓ down", text);
+    }
+
+    [Theory]
+    [InlineData(60, 60)]
+    [InlineData(80, 80)]
+    [InlineData(200, 84)]  // tope: un panel de 200 columnas se lee peor
+    [InlineData(40, 56)]   // mínimo legible
+    public void FormatRich_AdaptsToTerminalWidth_AndKeepsLinesAligned(int termWidth, int expected)
+    {
+        var lines = PanelLines(CliHumanFormatter.Format(MakeResult(), Rich(color: true, width: termWidth)));
+
+        Assert.All(lines, l => Assert.Equal(expected, CliText.VisibleLength(l)));
     }
 
     [Fact]
-    public void FormatRich_BoxLinesAreAlignedWithoutColor()
+    public void FormatRich_AsciiMode_UsesOnlyAscii()
     {
-        var term = new CliTerminal(new CliStyleOptions(Plain: false, NoColor: true, Style: "rich"), forceInteractive: true);
-        var text = CliHumanFormatter.Format(MakeResult(), term);
+        var text = CliHumanFormatter.Format(MakeResult(), Rich(unicode: false));
 
-        var heroLines = text.Split(Environment.NewLine)
-            .Where(l => l.StartsWith("╔") || l.StartsWith("║") || l.StartsWith("╚"))
-            .ToList();
-        Assert.NotEmpty(heroLines);
-        Assert.Single(heroLines.Select(l => l.Length).Distinct());
+        Assert.All(text, c => Assert.True(c < 128, $"no-ASCII: U+{(int)c:X4}"));
+        Assert.StartsWith("+- gard", text);
+        Assert.Contains("| ", text);
+    }
+
+    [Fact]
+    public void FormatRich_DrawsSparklineFromIntervals()
+    {
+        var samples = Enumerable.Range(0, 20)
+            .Select(i => new IntervalSample { StartS = i * 0.2, EndS = (i + 1) * 0.2, Bps = (ulong)(50_000_000 + i * 5_000_000) })
+            .ToArray();
+        var result = MakeResult() with
+        {
+            Intervals = new IntervalReport
+            {
+                WindowMs = 200,
+                Samples = samples,
+                Stats = new IntervalStats { MedianBps = 1, P95Bps = 1, StdevBps = 0, MinBps = 1, MaxBps = 1 },
+            },
+        };
+
+        var text = CliHumanFormatter.Format(result, Rich());
+
+        Assert.Contains("▁", text);
+        Assert.Contains("█", text);
+    }
+
+    [Fact]
+    public void FormatRich_KeepsAnsiOutWhenNoColor()
+    {
+        var text = CliHumanFormatter.Format(MakeResult(), Rich(color: false));
+
+        Assert.Contains("Throughput", text);
+        Assert.DoesNotContain("\u001b[", text);
+    }
+
+    [Fact]
+    public void FormatRich_ColorModeKeepsValidAnsiTerminators()
+    {
+        var text = CliHumanFormatter.Format(MakeResult(), Rich(color: true));
+
+        Assert.Contains("\u001b[", text);
+        Assert.DoesNotContain("\u001b[0M", text);
+        Assert.Contains("\u001b[0m", text);
     }
 
     [Theory]
@@ -86,29 +134,6 @@ public class CliHumanFormatterTests
         if (ratio >= 1.0) Assert.Equal(width, full);
         else if (ratio == 0.5) Assert.Equal(width / 2, full);
         else Assert.Equal(0, full);
-    }
-
-    [Fact]
-    public void FormatRich_KeepsAnsiOutWhenNoColor()
-    {
-        var term = new CliTerminal(new CliStyleOptions(Plain: false, NoColor: true, Style: "rich"), forceInteractive: true);
-        var text = CliHumanFormatter.Format(MakeResult(), term);
-
-        Assert.Contains("GARD LINK METER", text);
-        Assert.Contains("█", text);
-        Assert.DoesNotContain("\u001b[", text);
-    }
-
-    [Fact]
-    public void FormatRich_ColorModeKeepsValidAnsiTerminators()
-    {
-        var term = new CliTerminal(CliStyleOptions.Default, forceInteractive: true);
-        var text = CliHumanFormatter.Format(MakeResult(), term);
-
-        Assert.Contains("\u001b[", text);
-        Assert.DoesNotContain("\u001b[0M", text);
-        Assert.DoesNotContain("\u001b[32M", text);
-        Assert.Contains("\u001b[0m", text);
     }
 
     [Fact]

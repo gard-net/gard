@@ -207,8 +207,7 @@ public sealed class ControlMessageRouter : IAsyncDisposable
                 break;
 
             case ErrorMessage err:
-                Terminate(LandspeedException.Transport(
-                    $"peer envió error code={err.Body.Code}: {err.Body.Message}"));
+                Terminate(LandspeedException.FromPeer(err.Body.Code, err.Body.Message));
                 break;
 
             default:

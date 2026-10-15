@@ -68,7 +68,7 @@ public static class MeasurementSession
         var ack = await router.AwaitTestStartAckAsync(10_000, cancellationToken).ConfigureAwait(false);
         if (!ack.Accepted)
         {
-            throw LandspeedException.Transport($"host rechazó test_start: {ack.Reason ?? "sin motivo"}");
+            throw LandspeedException.TestRejected(ack.Reason ?? "sin motivo");
         }
         if (ack.DataPorts.Count != parms.Streams)
         {

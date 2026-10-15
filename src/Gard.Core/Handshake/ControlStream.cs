@@ -69,8 +69,7 @@ public sealed class ControlStream : IAsyncDisposable
         var msg = await NextAsync().ConfigureAwait(false);
         if (msg is ErrorMessage err)
         {
-            throw LandspeedException.Transport(
-                $"peer envió error code={err.Body.Code}: {err.Body.Message}");
+            throw LandspeedException.FromPeer(err.Body.Code, err.Body.Message);
         }
         var pair = extract(msg);
         if (pair is null)

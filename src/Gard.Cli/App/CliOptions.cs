@@ -7,15 +7,17 @@ using Gard.Core.Protocol;
 
 namespace Gard.Cli;
 
-public sealed record ScanOptions(int Seconds);
+public sealed record ScanOptions(int Seconds, bool Json = false);
 
 /// <param name="RequirePairing">Exigir código de 6 dígitos (spec §7).</param>
 /// <param name="PairCode">Código fijo (<c>--pair-code</c>); <c>null</c> ⇒ generar uno al arrancar.</param>
 public sealed record HostOptions(string Name, int Port, bool DynamicPort, bool RequirePairing = false, string? PairCode = null);
 
-public sealed record InfoOptions(string Host, int Port, string? PairCode = null);
+public sealed record InfoOptions(string Host, int Port, string? PairCode = null, bool Json = false);
 
-public sealed record WatchOptions(string Host, int Port, double IntervalS, TestCommandOptions Test);
+/// <param name="Count">Muestras a tomar; <c>null</c> ⇒ hasta Ctrl+C.</param>
+/// <param name="Json">Una línea JSON por muestra (NDJSON).</param>
+public sealed record WatchOptions(string Host, int Port, double IntervalS, TestCommandOptions Test, int? Count = null, bool Json = false);
 
 public sealed record TestCommandOptions
 {
@@ -26,6 +28,8 @@ public sealed record TestCommandOptions
     public required TestParameters Parameters { get; init; }
     /// <summary>Código para hosts que exigen pairing; <c>null</c> ⇒ preguntar si hay TTY.</summary>
     public string? PairCode { get; init; }
+    /// <summary>Sin progreso en stderr (<c>--quiet</c>).</summary>
+    public bool Quiet { get; init; }
 }
 
 public sealed class CliOptionException(string message) : ArgumentException(message);
@@ -33,13 +37,13 @@ public sealed class CliOptionException(string message) : ArgumentException(messa
 public static class CliOptions
 {
     private static readonly string[] GlobalValueOptions = ["--style"];
-    private static readonly string[] GlobalFlags = ["--plain", "--no-color"];
+    private static readonly string[] GlobalFlags = ["--plain", "--no-color", "--ascii"];
 
     public static CliStyleOptions ParseGlobalStyle(string[] args)
     {
         var style = GetStringOpt(args, "--style", "rich").ToLowerInvariant();
         if (style is not ("rich" or "plain")) throw new CliOptionException("--style must be rich or plain");
-        return new CliStyleOptions(HasFlag(args, "--plain"), HasFlag(args, "--no-color"), style);
+        return new CliStyleOptions(HasFlag(args, "--plain"), HasFlag(args, "--no-color"), style, HasFlag(args, "--ascii"));
     }
 
     public static string[] StripGlobalOptions(string[] args)
@@ -62,9 +66,9 @@ public static class CliOptions
 
     public static ScanOptions ParseScan(string[] args)
     {
-        var seconds = GetIntOpt(args, "--seconds", 10);
+        var seconds = GetIntOpt(args, "--seconds", 5);
         RequireRange(seconds, 1, 86_400, "--seconds");
-        return new ScanOptions(seconds);
+        return new ScanOptions(seconds, HasFlag(args, "--json"));
     }
 
     public static HostOptions ParseHost(string[] args, string defaultHostName)
@@ -151,6 +155,7 @@ public static class CliOptions
             Format = fmtStr,
             Label = label,
             PairCode = GetPairCode(args),
+            Quiet = HasFlag(args, "--quiet"),
             Parameters = new TestParameters
             {
                 Direction = direction,
@@ -174,7 +179,7 @@ public static class CliOptions
         if (string.IsNullOrWhiteSpace(host)) throw new CliOptionException("missing <host>");
         var port = GetIntOpt(args, "--port", DiscoveryConstants.DefaultPort);
         RequirePort(port, "--port");
-        return new InfoOptions(host, port, GetPairCode(args));
+        return new InfoOptions(host, port, GetPairCode(args), HasFlag(args, "--json"));
     }
 
     public static WatchOptions ParseWatch(string[] args)
@@ -188,8 +193,15 @@ public static class CliOptions
         if (!args.Contains("--duration")) testArgs = [.. testArgs, "--duration", "3"];
         if (!args.Contains("--warmup")) testArgs = [.. testArgs, "--warmup", "0"];
 
+        int? count = null;
+        if (args.Contains("--count"))
+        {
+            count = GetIntOpt(args, "--count", 1);
+            RequireRange(count.Value, 1, 1_000_000, "--count");
+        }
+
         var test = ParseTest(testArgs);
-        return new WatchOptions(test.Host, test.Port, interval, test);
+        return new WatchOptions(test.Host, test.Port, interval, test, count, HasFlag(args, "--json"));
     }
 
     private static string? GetPairCode(string[] args)

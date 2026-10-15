@@ -46,10 +46,34 @@ public class CliTableTests
         };
 
         var lines = CliTable.Render(ColorTerm, columns, rows).Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
-        var widths = lines.Select(CliText.VisibleLength).Distinct().ToArray();
+        var plain = lines.Select(CliText.StripAnsi).ToArray();
 
-        Assert.Single(widths);
+        // La segunda columna arranca en la misma posición visible en todas las filas.
+        var start = plain[0].IndexOf("STATUS", StringComparison.Ordinal);
+        Assert.Equal(start, plain[2].IndexOf("ready", StringComparison.Ordinal));
+        Assert.Equal(start, plain[3].IndexOf("exce", StringComparison.Ordinal));
         Assert.All(lines.Where(l => l.Contains(CliTheme.Red)), l => Assert.Contains(CliTheme.Reset, l));
+    }
+
+    [Fact]
+    public void Render_ShrinksWidestColumnToFitTerminal()
+    {
+        var narrow = new CliTerminal(CliStyleOptions.Default, forceInteractive: true, forceWidth: 40);
+        var columns = new[] { new CliTableColumn("NAME", 60), new CliTableColumn("OS", 8) };
+        var rows = new List<IReadOnlyList<string>> { new[] { new string('x', 60), "linux" } };
+
+        var lines = CliTable.Render(narrow, columns, rows).Split('\n').Select(l => CliText.StripAnsi(l.TrimEnd('\r')));
+
+        Assert.All(lines, l => Assert.True(l.Length <= 40, $"{l.Length}: {l}"));
+    }
+
+    [Fact]
+    public void Sparkline_ScalesToMaxAndResamples()
+    {
+        var spark = CliTable.Sparkline([0, 50, 100, 100], 4, CliSymbols.Unicode);
+        Assert.Equal("▁▅██", spark);
+        Assert.Equal(10, CliTable.Sparkline(Enumerable.Range(0, 100).Select(i => (double)i).ToArray(), 10, CliSymbols.Unicode).Length);
+        Assert.Equal("", CliTable.Sparkline([], 10, CliSymbols.Unicode));
     }
 
     [Theory]

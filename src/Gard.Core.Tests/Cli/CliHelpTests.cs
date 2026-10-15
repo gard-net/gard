@@ -19,10 +19,11 @@ public class CliHelpTests
     [Theory]
     [InlineData("scan", "gard scan [--seconds N]")]
     [InlineData("host", "gard host [--name NAME]")]
-    [InlineData("test", "gard test --host <ip-or-name>")]
-    [InlineData("watch", "gard watch --host <ip-or-name>")]
-    [InlineData("info", "gard info --host <ip-or-name>")]
+    [InlineData("test", "gard test <host> [options]")]
+    [InlineData("watch", "gard watch <host> [options]")]
+    [InlineData("info", "gard info <host>")]
     [InlineData("doctor", "gard doctor")]
+    [InlineData("completions", "gard completions <bash|zsh|fish|powershell>")]
     public void CommandHelp_UsesCommandSpecificUsage(string command, string expected)
     {
         var help = CliHelp.ForCommand(command);
@@ -41,6 +42,29 @@ public class CliHelpTests
         Assert.Contains("doctor", help);
         Assert.Contains("--plain", help);
         Assert.Contains("--style STYLE", help);
+    }
+
+    [Fact]
+    public void CommandHelp_ListsEveryOptionOfTheSpec()
+    {
+        // Help y validación salen de la misma spec: no pueden desalinearse.
+        foreach (var command in CliSpec.Commands)
+        {
+            var help = CliHelp.Command(command);
+            foreach (var option in command.Options)
+                Assert.Contains(option.Name, help);
+        }
+    }
+
+    [Fact]
+    public void Highlight_OnlyAddsColorWhenEnabled()
+    {
+        var plain = new CliTerminal(CliStyleOptions.Default with { NoColor = true }, forceInteractive: true);
+        var color = new CliTerminal(CliStyleOptions.Default, forceInteractive: true);
+        var help = CliHelp.General();
+
+        Assert.Equal(help, CliHelp.Highlight(help, plain));
+        Assert.Contains("\u001b[1mUsage:", CliHelp.Highlight(help, color));
     }
 
     [Fact]

@@ -108,6 +108,31 @@ public sealed class LandspeedException : Exception
         new(LandspeedErrorKind.PeerClosedWithoutTest, "El peer cerró la sesión sin pedir un test.",
             new Dictionary<string, object?>(), inner);
 
+    /// <summary>
+    /// Un <c>error</c> recibido del peer, con el <c>Kind</c> que corresponde a su
+    /// código (§8) para que el llamador pueda distinguir 3003/3004/pairing de una
+    /// falla de transporte. Códigos desconocidos ⇒ <c>Transport</c>.
+    /// </summary>
+    public static LandspeedException FromPeer(int code, string message)
+    {
+        var kind = code switch
+        {
+            1001 => LandspeedErrorKind.FrameTooLarge,
+            1002 => LandspeedErrorKind.FrameLengthZero,
+            1003 => LandspeedErrorKind.UnknownFrameType,
+            1004 => LandspeedErrorKind.MalformedControlJson,
+            1005 => LandspeedErrorKind.UnknownControlMessageType,
+            2000 => LandspeedErrorKind.IncompatibleProtocolVersion,
+            3001 => LandspeedErrorKind.PairingInvalid,
+            3002 => LandspeedErrorKind.PairingRequired,
+            3003 => LandspeedErrorKind.UdpNotNegotiated,
+            3004 => LandspeedErrorKind.PayloadOutOfRange,
+            _ => LandspeedErrorKind.Transport,
+        };
+        return new(kind, $"peer envió error code={code}: {message}",
+            new Dictionary<string, object?> { ["code"] = code, ["peerMessage"] = message, ["description"] = message });
+    }
+
     public static LandspeedException Cancelled() =>
         new(LandspeedErrorKind.Cancelled, "Operación cancelada.", new Dictionary<string, object?>());
 
