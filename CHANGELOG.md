@@ -8,6 +8,12 @@ protocol-level changes are summarised in that file's §11.
 
 ## [Unreleased]
 
+### Added
+- `packaging/homebrew/publish-tap.sh vX.Y.Z`: actualiza el tap de Homebrew
+  desde un release publicado con las credenciales locales. Es el método de
+  publicación vigente (sin secret `HOMEBREW_TAP_TOKEN`); documentado en
+  `packaging/README.md` y `AGENTS.md`.
+
 ## [0.3.0] — 2026-10-15
 
 CLI rediseñado, instalación con una línea (Homebrew, `curl | sh`, PowerShell),

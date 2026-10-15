@@ -326,10 +326,12 @@ checks that the Homebrew formula renders and `install.ps1` parses.
 2. Tag and push: `git tag v0.3.0 && git push origin v0.3.0`. `release.yml`
    verifies the tag matches the version, builds every platform and creates a
    **draft** release with archives, `.deb` packages and `SHA256SUMS`.
-3. Review and publish the draft. `homebrew.yml` then renders the formula and
-   commits it to `gard-net/homebrew-gard` (needs the `HOMEBREW_TAP_TOKEN`
-   secret; see `packaging/README.md`). The install scripts pick up the new
-   release automatically.
+3. Review and publish the draft.
+4. Update the Homebrew tap: `packaging/homebrew/publish-tap.sh vX.Y.Z`
+   (renders the formula from the release `SHA256SUMS` and pushes it to
+   `gard-net/homebrew-gard`; details and the optional automated alternative in
+   `packaging/README.md`). The install scripts pick up the new release
+   automatically.
 
 ## Benchmarks
 

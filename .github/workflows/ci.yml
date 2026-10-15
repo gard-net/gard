@@ -112,7 +112,7 @@ jobs:
           out/aot/gard doctor --json | python3 -c 'import json,sys; assert json.load(sys.stdin)["schema"]=="gard.doctor/1"'
 
       - name: Lint de instaladores
-        run: shellcheck scripts/install.sh packaging/homebrew/render-formula.sh
+        run: shellcheck scripts/install.sh packaging/homebrew/render-formula.sh packaging/homebrew/publish-tap.sh
 
       - name: install.sh contra un mirror local del binario recién compilado
         shell: bash
